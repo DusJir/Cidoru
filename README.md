@@ -10,6 +10,8 @@ obliged to provide any support related to it. This is third-party software, unre
 anything the Idoru Live UG team does. Whenever you have any issues or requests, please
 contact the party involved with this particular application (see the Contact chapter).
 
+<img width="2553" height="1489" alt="image" src="https://github.com/user-attachments/assets/e8febe14-9507-4a44-ae1f-1cc3d51329f9" />
+
 
 ## WHAT IS CIDORU AND WHY DOES IT EVEN EXIST?
 In short, CIdoru does what the original Idoru software does. So why does it exist? OK, you

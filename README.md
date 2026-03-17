@@ -1,6 +1,6 @@
-CIdoru v. 1.4
+# CIdoru v. 1.4
 
-DISCLAIMER:
+## DISCLAIMER:
 CIdoru is a custom, alternative companion application for the multi-track player IDORU P-1,
 originally developed by the Berlin-based Idoru Live UG team around Adam Ferns. Adam is aware
 of the existence of this alternative application, but by no means are he and his team even
@@ -9,7 +9,7 @@ obliged to provide any support related to it. This is third-party software, unre
 anything the Idoru Live UG team does. Whenever you have any issues or requests, please
 contact the party involved with this particular application (see the Contact chapter).
 
-WHAT IS CIDORU AND WHY DOES IT EVEN EXIST?
+## WHAT IS CIDORU AND WHY DOES IT EVEN EXIST?
 In short, CIdoru does what the original Idoru software does. So why does it exist? OK, you
 asked for this...
 Long story short, I believe I was one of the earlier owners of the Idoru P-1. A couple of
@@ -39,7 +39,7 @@ a slightly different workflow and, honestly, probably slower support, be my gues
 flattered. But please, do not bother Adam and his team with any issues that may come up while
 using my version. Those are on me, not Adam's. Thank you kindly for your understanding.
 
-TWO VERSIONS: WEB AND DESKTOP
+## TWO VERSIONS: WEB AND DESKTOP
 CIdoru comes in two flavours.
 The web version runs entirely in your browser — no installation required. It is intended for
 quick demos and emergency situations, for example when you need to make a last-minute change
@@ -51,7 +51,7 @@ sessions, can verify files on disk, handles SD card transfers without browser re
 and can download and install firmware automatically. See INSTALL.md for installation
 instructions.
 
-WHAT IS THE DIFFERENCE BETWEEN THE ORIGINAL APP AND THIS ONE?
+## WHAT IS THE DIFFERENCE BETWEEN THE ORIGINAL APP AND THIS ONE?
 Aside from the visual look and the technology under the hood? Not much. But there are some
 differences. Let's start with a slightly different workflow:
 Everything is present on one screen — the playlists, the songs, everything. Creating a
@@ -75,7 +75,7 @@ assigned, dim when the slot is empty. Hover for the full filename.
 Strips can be individually reset — clearing the file, routing, fader and mute in one click.
 Light and dark theme, switchable at any time from the toolbar.
 
-ARE THERE ANY LIMITATIONS OR CONS?
+## ARE THERE ANY LIMITATIONS OR CONS?
 I'm glad you asked. Of course there are.
 While the original Idoru software can communicate directly with the hardware via USB,
 CIdoru cannot. SD card transfer is the only supported method. Eject the SD card from
@@ -95,7 +95,7 @@ Support. I'm not doing this for a living. While I feel obliged to address any is
 software may cause, I do it in my spare time, and my spare time is scarce. You have been
 informed.
 
-SO HOW DOES IT WORK?
+## SO HOW DOES IT WORK?
 Pretty much the same as the original Idoru app. All restrictions — file format
 (44.1 kHz / 16-bit), naming conventions, character limits (32 characters max) and so on —
 are validated and enforced in CIdoru as well. Your best starting point is the original manual:
@@ -103,7 +103,7 @@ https://support.idoru.live/introduction-to-the-idoru-p-1-software
 The CIdoru user manual is available via the MANUAL button in the toolbar, and as MANUAL.html
 in the application folder.
 
-WHO ARE YOU AND HOW CAN I CONTACT YOU?
+## WHO ARE YOU AND HOW CAN I CONTACT YOU?
 My name is Barney Estrada, I'm a semi-professional musician and a professional software developer with more than 30 years
 of experience in both fields, living in the Czech Republic. I'd prefer you leave me alone,
 but if you must, send me an email at cidoru.app@gmail.com.

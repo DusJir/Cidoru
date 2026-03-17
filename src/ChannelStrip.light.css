@@ -1,0 +1,328 @@
+/* ═══════════════════════════════════════════════════════════════════
+   ChannelStrip.light.css  —  light-theme variable overrides
+   Apply by adding data-theme="light" to <html> or a wrapper element.
+   ═══════════════════════════════════════════════════════════════════ */
+
+[data-theme="light"] {
+
+  /* ── Strip shell ──────────────────────────────────────────────── */
+  --cs-bg-strip:          linear-gradient(180deg, #e8ecf3 0%, #dde3ed 100%);
+  --cs-border:            #b8c4d6;
+  --cs-shadow-strip:      0 4px 24px #0000001a;
+  --cs-inset:             inset 0 1px 0 #ffffff80;
+  --cs-bg-active:         linear-gradient(180deg, #dce4f0 0%, #d0daea 100%);
+  --cs-border-active:     #c89000;
+  --cs-shadow-active:     0 0 14px #f5c84240, 0 4px 24px #0000001a;
+
+  /* Routing mode strip */
+  --cs-bg-routing:        linear-gradient(180deg, #e0eee0 0%, #d4e8d4 100%);
+  --cs-border-routing:    #8abf8a;
+
+  /* ── Per-bank overrides ───────────────────────────────────────── */
+  --cs-strip-bg-left:     linear-gradient(180deg, #dce6f4 0%, #d0dcee 100%);
+  --cs-strip-bd-left:     #a8bcda;
+  --cs-strip-bg-right:    linear-gradient(180deg, #dceee0 0%, #d0e8d4 100%);
+  --cs-strip-bd-right:    #a8cfb4;
+
+  /* ── Label ────────────────────────────────────────────────────── */
+  --cs-label-color:       #4a5a70;
+  --cs-label-edit-bg:     #f4f8ff;
+  --cs-label-edit-bd:     #c89000;
+  --cs-label-edit-color:  #a07800;
+
+  /* ── Mono/Stereo indicator ────────────────────────────────────── */
+  --cs-ms-mono-color:     #2a70a8;
+  --cs-ms-stereo-color:   #1a8a60;
+  --cs-ms-mono-fill:      none;
+  --cs-ms-stereo-fill:    none;
+  --cs-ms-stroke:         2px;
+
+  /* ── Link button ──────────────────────────────────────────────── */
+  --cs-link-bg:           linear-gradient(180deg, #d8e4f0, #ccd8e8);
+  --cs-link-bd:           #b0c4d8;
+  --cs-link-color:        #608aaa;
+  --cs-link-hover-color:  #3a6a8a;
+  --cs-link-active-bg:    linear-gradient(180deg, #c0d8f0, #b0c8e4);
+  --cs-link-active-bd:    #3a9fd0;
+  --cs-link-active-color: #2a7aaa;
+  --cs-link-active-glow:  0 0 8px #3a9fd040;
+
+  /* ── Strip pair ───────────────────────────────────────────────── */
+  --cs-pair-gap:          4px;
+  --cs-group-gap:         14px;
+  --cs-pair-linked-color: #3a9fd0;
+  --cs-pair-linked-bg:    linear-gradient(180deg, #c8e0f4 0%, transparent 18%);
+
+  /* ── Scale ────────────────────────────────────────────────────── */
+  --cs-scale-color:       #7a8a9a;
+  --cs-scale-unity:       #c89000;
+  --cs-scale-pos:         #d04a20;
+  --cs-scale-tick:        #c0cad8;
+
+  /* ── Rail / rider ─────────────────────────────────────────────── */
+  --cs-rail-bg:           linear-gradient(180deg, #d0d8e4 0%, #c4ccd8 100%);
+  --cs-rail-shadow:       inset 0 1px 4px #00000022, 0 0 0 1px #b0bccc;
+  --cs-unity-mark:        #c8900044;
+  --cs-rider-bg:          linear-gradient(180deg, #e0e8f0 0%, #ccd6e4 45%, #c0cad8 100%);
+  --cs-rider-bd:          #a0b4c8;
+  --cs-rider-shadow:      0 2px 8px #00000033, inset 0 1px 0 #ffffff88, inset 0 -1px 0 #00000018;
+  --cs-rider-grip:        #00000010;
+  --cs-rider-grip-ctr:    #c8900066;
+  --cs-rider-bg-left:     linear-gradient(180deg, #dce6f4 0%, #c8d4e8 45%, #bccce0 100%);
+  --cs-rider-bd-left:     #90a8c4;
+  --cs-rider-bg-right:    linear-gradient(180deg, #dceee0 0%, #c8dcc8 45%, #bcd0be 100%);
+  --cs-rider-bd-right:    #90b898;
+  --cs-rider-bg-routing:  linear-gradient(180deg, #d4ecd8 0%, #c4dcc8 45%, #b8d0bc 100%);
+  --cs-rider-bd-routing:  #70aa78;
+
+  /* ── dB readout ───────────────────────────────────────────────── */
+  --cs-readout-bg:        #f0f4fa;
+  --cs-readout-bd:        #b8c8da;
+  --cs-readout-hover-bd:  #8aa8c0;
+  --cs-readout-muted:     #90a0b4;
+  --cs-readout-hot:       #d04a20;
+  --cs-readout-warm:      #c08800;
+  --cs-readout-normal:    #208a30;
+  --cs-readout-routing:   #209060;
+  --cs-readout-edit-bd:   #208a30;
+  --cs-readout-edit-color:#208a30;
+
+  /* ── Buttons ──────────────────────────────────────────────────── */
+  --cs-btn-bg:            linear-gradient(180deg, #e0e8f0, #d4dce8);
+  --cs-btn-bd:            #b8c4d6;
+  --cs-btn-color:         #6a7a8a;
+  --cs-mute-color:        #cc2020;
+  --cs-mute-glow:         #cc202066;
+
+  /* ── VU ───────────────────────────────────────────────────────── */
+  --cs-vu-green-on:       #28b040;
+  --cs-vu-green-off:      #c0ddc8;
+  --cs-vu-yellow-on:      #c89000;
+  --cs-vu-yellow-off:     #e0d8b8;
+  --cs-vu-red-on:         #cc2020;
+  --cs-vu-red-off:        #e0c0c0;
+  --cs-vu-red-glow:       0 0 4px #cc202066;
+  --cs-vu-yellow-glow:    0 0 3px #c8900044;
+
+  /* ── Modifier ─────────────────────────────────────────────────── */
+  --cs-mod-bg:            linear-gradient(180deg, #ece8f4 0%, #e4e0f0 100%);
+  --cs-mod-bd:            #c0b0d8;
+  --cs-mod-knob-bg:       radial-gradient(circle at 38% 35%, #d8ccf0, #c0b0e0);
+  --cs-mod-knob-bd:       #a890c8;
+  --cs-mod-knob-shadow:   0 3px 12px #00000033, inset 0 1px 2px #ffffff88;
+  --cs-mod-knob-hover:    0 0 10px #906ad020;
+  --cs-mod-indicator:     #7040a0;
+  --cs-mod-label:         #806090;
+  --cs-mod-label-bd:      #c0a0d8;
+  --cs-mod-arc:           #d0c0e8;
+  --cs-mod-sublabel:      #c8b0e0;
+  --cs-mod-readout:       #7040a0;
+  --cs-mod-sep:           #c0a8d8;
+
+  /* ── Bank ─────────────────────────────────────────────────────── */
+  --cs-bank-bg:           linear-gradient(180deg, #e4eaf4 0%, #dae0ee 100%);
+  --cs-bank-bd:           #b8c8da;
+  --cs-bank-header-bg:    #dce4f0;
+  --cs-bank-header-bd:    #c4d0e4;
+  --cs-bank-num:          #8a9ab4;
+  --cs-bank-label:        #5a7090;
+  --cs-bank-count:        #8a9ab4;
+  --cs-bank-bg-left:      linear-gradient(180deg, #dce6f8 0%, #d0daf0 100%);
+  --cs-bank-header-left:  #d4def0;
+  --cs-bank-label-left:   #4a6a9a;
+  --cs-bank-bg-right:     linear-gradient(180deg, #dceee4 0%, #d0e8da 100%);
+  --cs-bank-header-right: #d4ecd8;
+  --cs-bank-label-right:  #4a7a5a;
+  --cs-bank-mode-badge:   #c8d8e8;
+  --cs-bank-mode-right:   #c8dcd0;
+
+  /* Dimmed bank (no output selected) */
+  --cs-bank-dimmed-opacity: 0.4;
+
+  /* ── Console ──────────────────────────────────────────────────── */
+  --cs-console-bg:        #d8dfe8;
+  --cs-console-bd:        #b8c4d4;
+  --cs-console-shadow:    0 24px 64px #00000033;
+  --cs-banks-gap:         16px;
+
+  /* ── Status bar ───────────────────────────────────────────────── */
+  --status-bg:            #e8ecf2;
+  --status-bd:            #c4ccd8;
+  --status-text:          #8090a4;
+  --status-active-text:   #208a30;
+
+  /* ── Connection counter ───────────────────────────────────────── */
+  --conn-bg:              #e0e8f0;
+  --conn-bd:              #c0ccd8;
+  --conn-label:           #7a8a9a;
+  --conn-ok-color:        #208a30;
+  --conn-ok-fill:         #c8e8cc;
+  --conn-warn-color:      #c08800;
+  --conn-warn-fill:       #f0e4b0;
+  --conn-full-color:      #cc2020;
+  --conn-full-fill:       #f0c8c8;
+
+  /* ── Routing tree ─────────────────────────────────────────────── */
+  --rt-bg:                #e8ecf2;
+  --rt-bd:                #c4ccd8;
+  --rt-title:             #7a8a9a;
+  --rt-out-label:         #4a7a5a;
+  --rt-out-sel-bg:        #d4f0dc;
+  --rt-out-sel-bd:        #4a9a6a;
+  --rt-in-hot:            #28b040;
+  --rt-in-mid:            #70aa60;
+  --rt-in-low:            #a0c0a0;
+  --rt-level-color:       #b8d8bc;
+  --rt-linked-badge:      #3a9fd0;
+
+  /* ── Toolbar ──────────────────────────────────────────────────── */
+  --tb-bg:                #dde3ec;
+  --tb-bd:                #c4ccd8;
+  --tb-shadow:            0 2px 12px #00000022;
+  --tb-logo:              #6a8aaa;
+  --tb-div:               #b8c4d4;
+  --tb-btn-bg:            linear-gradient(180deg, #e4ecf4, #dce4ee);
+  --tb-btn-bd:            #b8c8da;
+  --tb-btn-color:         #5a7090;
+  --tb-btn-hover-bg:      linear-gradient(180deg, #d8e4f0, #d0dcea);
+  --tb-btn-hover-color:   #3a5a7a;
+  --tb-btn-dirty-bd:      #c89000;
+  --tb-btn-dirty-color:   #a07000;
+  --tb-btn-dirty-glow:    0 0 8px #c8900033;
+  --tb-btn-transfer-bd:   #4a9a7a;
+  --tb-btn-transfer-color:#2a7a5a;
+  --tb-btn-view-active-bg:linear-gradient(180deg, #c8daf0, #bcd0e8);
+  --tb-btn-view-active-bd:#3a9fd0;
+  --tb-btn-view-active:   #2a7aaa;
+
+  /* ── Panes ────────────────────────────────────────────────────── */
+  --pane-bg:              #edf0f6;
+  --pane-bd:              #c4ccd8;
+  --pane-header-bg:       #e4e8f0;
+  --pane-title:           #5a7090;
+  --pane-empty:           #8090a4;
+  --pane-item-bd:         #c8d0dc;
+  --pane-item-hover:      #e0e8f4;
+  --pane-item-sel-bg:     #d4e4f4;
+  --pane-item-sel-bd:     #4a8ab8;
+  --pane-item-name:       #3a5a7a;
+  --pane-item-meta:       #7a90a8;
+  --pane-add-bg:          linear-gradient(180deg, #d4e4f4, #c8dcee);
+  --pane-add-bd:          #90b4d0;
+  --pane-add-color:       #4a7a9a;
+  --pane-add-hover:       #2a5a8a;
+  --pane-action:          #8090a4;
+  --pane-action-hover:    #3a5a7a;
+  --pane-del-hover:       #cc3030;
+  --pane-disabled-bg:     #e8ecf2;
+
+  /* ── Mixer pane ───────────────────────────────────────────────── */
+  --mixer-bg:             #dde3ec;
+
+  /* ── Info bar ─────────────────────────────────────────────────── */
+  --info-bg:              #e4eaf4;
+  --info-bd:              #c4ccd8;
+  --info-color:           #7a8a9a;
+  --info-dot:             #9aabbf;
+  --info-success:         #c0e4c8;
+  --info-success-dot:     #28b040;
+  --info-error:           #f0c8c8;
+  --info-error-dot:       #cc2020;
+  --info-info:            #c8daf0;
+  --info-info-dot:        #3a9fd0;
+
+  /* ── Modal ────────────────────────────────────────────────────── */
+  --modal-overlay:        #00000066;
+  --modal-bg:             #f0f4fa;
+  --modal-bd:             #c4d0e4;
+  --modal-shadow:         0 24px 64px #00000044;
+  --modal-header-bg:      #e4eaf4;
+  --modal-header-color:   #3a5a7a;
+  --modal-close:          #7a90a8;
+  --modal-close-hover:    #cc2020;
+  --modal-footer-bg:      #e4eaf4;
+  --modal-footer-bd:      #c4ccd8;
+  --form-label:           #5a7090;
+  --form-input-bg:        #ffffff;
+  --form-input-bd:        #b8cad8;
+  --form-input-color:     #2a4a6a;
+  --form-input-focus:     #3a8ab8;
+  --modal-btn-bg:         linear-gradient(180deg, #e0eaf4, #d8e4f0);
+  --modal-btn-bd:         #b8c8da;
+  --modal-btn-color:      #5a7090;
+  --modal-primary-bg:     linear-gradient(180deg, #c8daf0, #b8ceea);
+  --modal-primary-bd:     #3a7ab8;
+  --modal-primary-color:  #1a4a7a;
+
+  /* ── Help ─────────────────────────────────────────────────────── */
+  --help-title:           #4a6a8a;
+  --help-line:            #b0c0d0;
+
+  /* ── Matrix view ──────────────────────────────────────────────── */
+  --mat-bg:               #edf0f6;
+  --mat-bd:               #c4ccd8;
+  --mat-corner:           #c0ccd8;
+  --mat-col-header:       #7a90a8;
+  --mat-col-linked:       #4a80aa;
+  --mat-row-header:       #8aaabf;
+  --mat-row-short:        #3a5a7a;
+  --mat-row-full:         #7a90a8;
+  --mat-cell-bg:          #f4f6fa;
+  --mat-cell-bd:          #c8d0dc;
+  --mat-cell-focus:       #4a8ab8;
+  --mat-cell-active-bg:   #d4f0dc;
+  --mat-cell-active-bd:   #4a9a6a;
+  --mat-cell-active-color:#207040;
+  --mat-hint:             #8090a4;
+
+  /* ── Audio slot form ──────────────────────────────────────────── */
+  --slot-index:           #7a90a8;
+  --slot-ms-mono-bd:      #90a8c0;
+  --slot-ms-mono-color:   #4a80a8;
+  --slot-ms-stereo-bd:    #70a888;
+  --slot-ms-stereo-color: #2a8060;
+  --slot-pick-bg:         linear-gradient(180deg, #d4e4f4, #c8dcee);
+  --slot-pick-bd:         #7ab4d0;
+  --slot-pick-color:      #3a7090;
+  --slot-pick-hover:      #1a5070;
+}
+/* ── Strip file occupancy indicator — light theme ────────────────── */
+[data-theme="light"] .strip-file-dot--assigned .strip-file-dot-pip {
+  background: #1a8a40;
+}
+[data-theme="light"] .strip-file-dot--empty .strip-file-dot-pip {
+  background: #a0b0c0;
+}
+[data-theme="light"] .strip-file-dot-name {
+  color: #2a5a3a;
+  font-weight: 700;
+}
+
+/* ── Firmware manager — light theme ─────────────────────────────── */
+[data-theme="light"] .firmware-status-box {
+  background: #f0f4fa;
+  border-color: var(--modal-bd);
+}
+[data-theme="light"] .firmware-found-item {
+  background: #f0f4fa;
+  border-color: var(--modal-bd);
+}
+[data-theme="light"] .firmware-progress-bar {
+  background: #e4eaf4;
+}
+[data-theme="light"] .firmware-section-title {
+  color: #3a7ab8;
+}
+[data-theme="light"] .firmware-ok-msg  { color: #1a7a30; }
+[data-theme="light"] .firmware-err-msg { color: #a07000; }
+[data-theme="light"] .firmware-note    { color: #4a6a8a; }
+[data-theme="light"] .firmware-steps   { color: #3a5a70; }
+[data-theme="light"] .firmware-found-ver { color: #1a7a30; }
+[data-theme="light"] .firmware-found-url { color: #5a7a8a; }
+[data-theme="light"] .firmware-progress-fill { background: #3a7ab8; }
+[data-theme="light"] .firmware-progress-label { color: #3a7ab8; }
+[data-theme="light"] .firmware-status-dot--ok { color: #1a8a40; }
+
+/* ── Reset button — light theme ──────────────────────────────────── */
+[data-theme="light"] .channel-btn--reset { color: #9a6060; border-color: #c0a8a8; }
+[data-theme="light"] .channel-btn--reset:hover { color: #cc2020; border-color: #cc2020; }

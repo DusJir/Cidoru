@@ -128,6 +128,7 @@ https://support.idoru.live/introduction-to-the-idoru-p-1-software
 The CIdoru user manual is available via the MANUAL button in the toolbar, and as MANUAL.html
 in the application folder.
 
+<img width="2559" height="1505" alt="image" src="https://github.com/user-attachments/assets/74fd6938-4e78-449e-8b49-2ed4df430fa7" />
 
 ## WHO ARE YOU AND HOW CAN I CONTACT YOU?
 I'm a semi-professional musician and a professional software developer with more than 30 years

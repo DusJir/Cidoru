@@ -90,7 +90,6 @@ differences. Let's start with a slightly different workflow:
 - Light and dark theme, switchable at any time from the toolbar.
 
 <img width="2559" height="1508" alt="image" src="https://github.com/user-attachments/assets/761cc4c0-9b03-4350-8b4a-cabf2cd45699" />
-<img width="2559" height="1508" alt="image" src="https://github.com/user-attachments/assets/761cc4c0-9b03-4350-8b4a-cabf2cd45699" />
 
 
 ## ARE THERE ANY LIMITATIONS OR CONS?

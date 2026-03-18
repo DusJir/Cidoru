@@ -89,6 +89,9 @@ differences. Let's start with a slightly different workflow:
 - Strips can be individually reset — clearing the file, routing, fader and mute in one click.
 - Light and dark theme, switchable at any time from the toolbar.
 
+<img width="2559" height="1508" alt="image" src="https://github.com/user-attachments/assets/761cc4c0-9b03-4350-8b4a-cabf2cd45699" />
+<img width="2559" height="1508" alt="image" src="https://github.com/user-attachments/assets/761cc4c0-9b03-4350-8b4a-cabf2cd45699" />
+
 
 ## ARE THERE ANY LIMITATIONS OR CONS?
 I'm glad you asked. Of course there are.

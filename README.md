@@ -46,6 +46,8 @@ a slightly different workflow and, honestly, probably slower support, be my gues
 flattered. But please, do not bother Adam and his team with any issues that may come up while
 using my version. Those are on me, not Adam's. Thank you kindly for your understanding.
 
+![cidoru-matrix](https://github.com/user-attachments/assets/119fa92e-5bd2-4e94-8f8b-333b6073588a)
+
 
 ## TWO VERSIONS: WEB AND DESKTOP
 CIdoru comes in two flavours.

@@ -126,6 +126,12 @@ in the application folder.
 
 
 ## WHO ARE YOU AND HOW CAN I CONTACT YOU?
-My name is Barney Estrada, I'm a semi-professional musician and a professional software developer with more than 30 years
+I'm a semi-professional musician and a professional software developer with more than 30 years
 of experience in both fields, living in the Czech Republic. I'd prefer you leave me alone,
 but if you must, send me an email at cidoru.app@gmail.com.
+
+
+## RELEASE
+Cidoru v. 1.4 - Initial public release
+- web version available at https://cidoru.bastardizer.cz 
+- desktop app (Windows, Linux) available for download at the same site

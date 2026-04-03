@@ -213,31 +213,46 @@ export function generateSongFile(song, state) {
     :                                                  "QueueNext";
 
   const IN_KEYS = ["F1","F2","F3","F4","F5","F6","AN"];
-  // Sections in file order: HeadPhone (col 0), then Output1-6 (cols 1-6)
   const SECTIONS = ["HeadPhone","Output1","Output2","Output3","Output4","Output5","Output6"];
+  const CRLF = "\r\n";
 
-  let txt = "Global sets\n";
-  txt += `Level- ${Math.round(mod)}\n`;
-  txt += `BPM- ${song?.bpm ?? 120}\n`;
-  txt += `AtEnd- ${atEnd}\n\n`;
+  let txt = "Global sets" + CRLF;
+  txt += `Level- ${Math.round(mod)}` + CRLF;
+  txt += `BPM- ${song?.bpm ?? 120}` + CRLF;
+  txt += `AtEnd- ${atEnd}` + CRLF + CRLF;
 
-  txt += "Input Files\n";
-  slots.forEach((sl, i) => {
-    if (sl?.fileName) txt += `F${i+1}- "${sl.shortName || `F${i+1}`}" "${sl.fileName}"\n`;
-  });
-  if (song?.midiFile) txt += `MIDI- "${song.midiFile}"\n`;
-  txt += "\n";
+  txt += "Input Files" + CRLF;
+  // All 6 slots always written — empty string if no file assigned
+  for (let i = 0; i < 6; i++) {
+    const sl        = slots[i] ?? {};
+    const shortName = sl.shortName || `F${i+1}`;
+    const fileName  = sl.fileName  || "";
+    txt += `F${i+1}- "${shortName}" "${fileName}"` + CRLF;
+  }
+  txt += `MIDI- ${song?.midiFile ? `"${song.midiFile}"` : ""}` + CRLF + CRLF;
 
   SECTIONS.forEach((section, colIdx) => {
-    txt += `${section}\n`;
+    txt += section + CRLF;
     for (let inIdx = 0; inIdx < 7; inIdx++) {
       const level = mat[inIdx][colIdx];
       const mute  = lf[inIdx] ? " MUTE" : "";
-      txt += `IN${inIdx+1}- ${IN_KEYS[inIdx]} ${level}${mute}\n`;
+      txt += `IN${inIdx+1}- ${IN_KEYS[inIdx]} ${level}${mute}` + CRLF;
     }
-    txt += "\n";
+    txt += CRLF;
   });
   return txt;
+}
+
+// Generate fileMap.json — maps stable file UUIDs to filenames
+// UUIDs are stored in audioSlots as sl.fileUUID and midiFileUUID on the song
+export function generateFileMap(song) {
+  const map = {};
+  const slots = song?.audioSlots ?? [];
+  for (const sl of slots) {
+    if (sl?.fileName && sl?.fileUUID) map[sl.fileUUID] = `${sl.fileName}.wav`;
+  }
+  if (song?.midiFile && song?.midiFileUUID) map[song.midiFileUUID] = `${song.midiFile}.mid`;
+  return map;
 }
 
 export function generateSetlistFile(playlist, songs, mixerStates) {
@@ -247,13 +262,16 @@ export function generateSetlistFile(playlist, songs, mixerStates) {
 
   const links = lp.map((on, i) => on ? `${i*2+1}-${i*2+2}` : null).filter(Boolean).join(" ");
   const lvl = (i) => dbToFileLevel(rf[i]?.db ?? 0);
+  const CRLF = "\r\n";
 
-  let txt = "Global sets\n";
-  if (links) txt += `StereoLinks- ${links}\n`;
-  txt += `HeadPhone- ${lvl(6)}\n`;
-  for (let i = 0; i < 6; i++) txt += `Output${i+1}- ${lvl(i)}\n`;
-  txt += "\nSongs\n";
-  songs.forEach(s => { txt += `"${s.name}"\n`; });
+  let txt = "SetList file" + CRLF + CRLF;
+  txt += "Global sets" + CRLF;
+  if (links) txt += `StereoLinks- ${links}` + CRLF;
+  txt += `HeadPhone- ${lvl(6)}` + CRLF;
+  for (let i = 0; i < 6; i++) txt += `Output${i+1}- ${lvl(i)}` + CRLF;
+  txt += CRLF + "Songs" + CRLF;
+  songs.forEach(s => { txt += `"${s.name}"` + CRLF; });
+  txt += CRLF;
   return txt;
 }
 
@@ -268,6 +286,12 @@ export const transferToSdCard = null;
 // ═══════════════════════════════════════════════════════════════════
 const STORAGE_KEY = "idoru-p1-project";
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function genUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
 
 export function defaultAudioSlots() {
   return Array.from({ length: 6 }, () => ({ shortName: "", fileName: "", stereo: false }));
@@ -2125,8 +2149,8 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
 //  WEB WELCOME MODAL — shown once on load in web mode only
 // ═══════════════════════════════════════════════════════════════════
 function WebWelcomeModal({ onClose }) {
-  const winUrl   = '/CIdoru-Setup-1.4.0.exe';
-  const linuxUrl = '/CIdoru-Setup-1.4.0.AppImage';
+  const winUrl   = '/CIdoru-Setup-1.6.0.exe';
+  const linuxUrl = '/CIdoru-Setup-1.6.0.AppImage';
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
@@ -2155,6 +2179,15 @@ function WebWelcomeModal({ onClose }) {
             "Unknown Publisher" warning. Simply click <em>More info → Run anyway</em> to proceed,
             exactly as you would with the original Idoru software.
           </p>
+          <p className="welcome-body">
+            From the version 1.6.0 onwards, all announcements about new versions, release notes etc.
+            will be posted via www.grinware.cz domain. In case of any issues please check that site first. Thank you.
+            <div className="welcome-download-row">
+              <a href="https://dev.grinware.cz" target="_blank" className="modal-btn welcome-dl-btn">
+                ► dev.grinware.cz
+              </a>
+            </div>
+          </p>
           <div className="welcome-download-row">
             <a href={winUrl} download className="modal-btn modal-btn--primary welcome-dl-btn">
               ⬇ Download for Windows (.exe)
@@ -2182,7 +2215,23 @@ function WebWelcomeModal({ onClose }) {
 //  APP
 // ═══════════════════════════════════════════════════════════════════
 export function App() {
-  const [project,       setProject]      = useState(() => platform.getInitialSession() || emptyProject());
+  const [project,       setProject]      = useState(() => {
+    const s = platform.getInitialSession() || emptyProject();
+    // Migrate: ensure all playlists and songs have UUIDs (for existing sessions)
+    return {
+      ...s,
+      playlists: (s.playlists || []).map(pl => ({ uuid: genUUID(), ...pl })),
+      songs:     (s.songs     || []).map(sg => ({
+        uuid:         genUUID(),
+        midiFileUUID: sg.midiFile ? genUUID() : null,
+        ...sg,
+        audioSlots: (sg.audioSlots || defaultAudioSlots()).map(sl => ({
+          fileUUID: sl.fileName ? genUUID() : null,
+          ...sl,
+        })),
+      })),
+    };
+  });
   const [mixerStates,   setMixerStates]  = useState(() => (platform.getInitialSession() || {}).mixerStates || {});
   const [dirtyIds,      setDirtyIds]     = useState(() => new Set());
   const [selectedPlId,  setSelectedPlId] = useState(null);
@@ -2427,7 +2476,14 @@ export function App() {
       songs: prev.songs.map(s => {
         if (s.id !== selectedSongId) return s;
         const slots = s.audioSlots ? [...s.audioSlots] : defaultAudioSlots();
-        slots[slotIdx] = { ...slots[slotIdx], ...serializableData };
+        const existing = slots[slotIdx] ?? {};
+        slots[slotIdx] = {
+          ...existing,
+          ...serializableData,
+          fileUUID: serializableData.fileName
+            ? (existing.fileUUID || genUUID())
+            : null,
+        };
         return { ...s, audioSlots: slots };
       }),
     }));
@@ -2470,7 +2526,7 @@ export function App() {
     setProject(p => ({
       ...p,
       playlists: id ? p.playlists.map(pl => pl.id === id ? { ...pl, name } : pl)
-                    : [...p.playlists, { id: genId(), name }],
+                    : [...p.playlists, { id: genId(), uuid: genUUID(), name }],
     }));
     setPlForm(null);
     setDirtyIds(prev => new Set([...prev, "__meta"]));
@@ -2537,11 +2593,19 @@ export function App() {
     }
 
     if (isNew) {
+      // Helper to ensure each audio slot has a stable fileUUID
+      const slotsWithUUIDs = (rest.audioSlots ?? defaultAudioSlots()).map(sl => ({
+        ...sl,
+        fileUUID: sl.fileUUID || (sl.fileName ? genUUID() : null),
+      }));
+
       const newSongs = playlistIds.map(() => ({
         ...rest,
         id:         genId(),
-        playlistId: playlistIds[0],   // overwritten below
-        audioSlots: defaultAudioSlots(),
+        uuid:       genUUID(),
+        playlistId: playlistIds[0],
+        audioSlots: slotsWithUUIDs,
+        midiFileUUID: rest.midiFile ? genUUID() : null,
       })).map((s, i) => ({ ...s, playlistId: playlistIds[i] }));
 
       // Cache file references for each new song
@@ -2567,6 +2631,9 @@ export function App() {
         newSongs.forEach(s => next.add(s.id));
         return next;
       });
+      // Auto-select the first new song so mixer strips show immediately
+      setSongId(newSongs[0].id);
+      if (newSongs[0].playlistId) setSelectedPlId(newSongs[0].playlistId);
     } else {
       // Editing existing song — update file cache
       if (_slotFiles) {
@@ -2577,12 +2644,26 @@ export function App() {
       }
       if (_midiFile) platform.cacheFileFromPickResult(fileCache.current, `${rest.id}_midi`,
         { file: _midiFile instanceof File ? _midiFile : null, filePath: typeof _midiFile === "string" ? _midiFile : null });
-      setProject(p => ({ ...p, songs: p.songs.map(s => s.id === rest.id ? { ...rest, playlistId: s.playlistId } : s) }));
+      // Ensure uuid and file UUIDs are preserved/assigned on edit
+      setProject(p => ({ ...p, songs: p.songs.map(s => {
+        if (s.id !== rest.id) return s;
+        const updatedSlots = (rest.audioSlots ?? s.audioSlots ?? defaultAudioSlots()).map((sl, i) => ({
+          ...sl,
+          fileUUID: sl.fileUUID || (sl.fileName ? (s.audioSlots?.[i]?.fileUUID || genUUID()) : null),
+        }));
+        return {
+          ...rest,
+          uuid:         s.uuid || genUUID(),
+          playlistId:   s.playlistId,
+          audioSlots:   updatedSlots,
+          midiFileUUID: rest.midiFile ? (s.midiFileUUID || genUUID()) : null,
+        };
+      })}));
       setDirtyIds(prev => new Set([...prev, rest.id]));
     }
     setSongForm(null);
     showInfo(isNew ? `Song added to ${playlistIds.length} playlist(s).` : "Song updated.", "success");
-  }, [selectedPlId, showInfo]);
+  }, [selectedPlId, showInfo, setSongId, setSelectedPlId]);
 
   const handleDeleteSong = (id) => {
     setProject(p => ({ ...p, songs: p.songs.filter(s => s.id !== id) }));

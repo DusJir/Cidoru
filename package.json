@@ -1,9 +1,10 @@
 {
   "name": "cidoru",
   "productName": "CIdoru",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "description": "Alternative companion application for the IDORU P-1 multi-track player",
-  "author": "Barney Estrada <cidoru.app@gmail.com>",
+  "author": "Barney Estrada <barney.estrada@bastardizer.cz>",
+  "homepage": "https://dev.grinware.cz",
   "license": "MIT",
   "private": true,
   "type": "module",

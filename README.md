@@ -10,8 +10,6 @@ obliged to provide any support related to it. This is third-party software, unre
 anything the Idoru Live UG team does. Whenever you have any issues or requests, please
 contact the party involved with this particular application (see the Contact chapter).
 
-<img width="2553" height="1489" alt="image" src="https://github.com/user-attachments/assets/e8febe14-9507-4a44-ae1f-1cc3d51329f9" />
-
 
 ## WHAT IS CIDORU AND WHY DOES IT EVEN EXIST?
 In short, CIdoru does what the original Idoru software does. So why does it exist? OK, you
@@ -45,8 +43,6 @@ with the version supported by the original team, stick with that. If you like my
 a slightly different workflow and, honestly, probably slower support, be my guest — I'll be
 flattered. But please, do not bother Adam and his team with any issues that may come up while
 using my version. Those are on me, not Adam's. Thank you kindly for your understanding.
-
-![cidoru-matrix](https://github.com/user-attachments/assets/119fa92e-5bd2-4e94-8f8b-333b6073588a)
 
 
 ## TWO VERSIONS: WEB AND DESKTOP
@@ -89,8 +85,6 @@ differences. Let's start with a slightly different workflow:
 - Strips can be individually reset — clearing the file, routing, fader and mute in one click.
 - Light and dark theme, switchable at any time from the toolbar.
 
-<img width="2559" height="1508" alt="image" src="https://github.com/user-attachments/assets/761cc4c0-9b03-4350-8b4a-cabf2cd45699" />
-
 
 ## ARE THERE ANY LIMITATIONS OR CONS?
 I'm glad you asked. Of course there are.
@@ -128,15 +122,8 @@ https://support.idoru.live/introduction-to-the-idoru-p-1-software
 The CIdoru user manual is available via the MANUAL button in the toolbar, and as MANUAL.html
 in the application folder.
 
-<img width="2559" height="1505" alt="image" src="https://github.com/user-attachments/assets/74fd6938-4e78-449e-8b49-2ed4df430fa7" />
 
 ## WHO ARE YOU AND HOW CAN I CONTACT YOU?
-I'm a semi-professional musician and a professional software developer with more than 30 years
+My name is Barney Estrada, I'm a semi-professional musician and a professional software developer with more than 30 years
 of experience in both fields, living in the Czech Republic. I'd prefer you leave me alone,
 but if you must, send me an email at cidoru.app@gmail.com.
-
-
-## RELEASE
-Cidoru v. 1.4 - Initial public release
-- web version available at https://cidoru.bastardizer.cz 
-- desktop app (Windows, Linux) available for download at the same site

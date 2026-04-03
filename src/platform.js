@@ -266,26 +266,41 @@ async function webTransfer (project, mixerStates, fileCache, onProgress) {
   const listsDir = await root.getDirectoryHandle('lists', { create: true })
   const missing  = []
 
+  // Ensure update/ folder always exists
+  await root.getDirectoryHandle('update', { create: true })
+
+  async function writeText (dirHandle, filename, content) {
+    const fh = await dirHandle.getFileHandle(filename, { create: true })
+    const w  = await fh.createWritable()
+    await w.write(content); await w.close()
+  }
+
+  // session.json
+  const sessionUUID = project.sessionUUID || '00000000-0000-4000-8000-000000000000'
+  await writeText(listsDir, 'session.json', JSON.stringify({
+    id: sessionUUID, filePath: '', name: project.name || 'CIdoru Session', deviceImport: false
+  }))
+
   for (const pl of project.playlists) {
     const songs  = project.songs.filter(s => s.playlistId === pl.id)
     const plName = _sanitizeName(pl.name)
     const plDir  = await listsDir.getDirectoryHandle(plName, { create: true })
 
-    const slTxt = _genSetlist(pl, songs, mixerStates)
-    const slFH  = await plDir.getFileHandle(`${plName}.txt`, { create: true })
-    const slW   = await slFH.createWritable(); await slW.write(slTxt); await slW.close()
+    await writeText(plDir, 'setlist.json', JSON.stringify({
+      id: pl.uuid || pl.id, songs: songs.map(s => s.uuid || s.id)
+    }))
+    await writeText(plDir, `${plName}.txt`, _genSetlist(pl, songs, mixerStates))
     onProgress?.(`✓ ${plName}/${plName}.txt`)
 
     for (const song of songs) {
       const sName   = _sanitizeName(song.name)
       const songDir = await plDir.getDirectoryHandle(sName, { create: true })
 
-      const sTxt = _genSong(song, mixerStates[song.id])
-      const sFH  = await songDir.getFileHandle(`${sName}.txt`, { create: true })
-      const sW   = await sFH.createWritable(); await sW.write(sTxt); await sW.close()
+      await writeText(songDir, 'song.json',    JSON.stringify({ id: song.uuid || song.id }))
+      await writeText(songDir, 'fileMap.json', JSON.stringify(_genFileMap(song)))
+      await writeText(songDir, `${sName}.txt`, _genSong(song, mixerStates[song.id]))
       onProgress?.(`  ✓ ${plName}/${sName}/${sName}.txt`)
 
-      // WAV files
       const slots = song.audioSlots ?? []
       for (let i = 0; i < slots.length; i++) {
         const sl = slots[i]
@@ -302,7 +317,6 @@ async function webTransfer (project, mixerStates, fileCache, onProgress) {
         }
       }
 
-      // MIDI
       if (song.midiFile) {
         const mf = fileCache?.get(`${song.id}_midi`)
         if (mf instanceof File) {
@@ -320,47 +334,7 @@ async function webTransfer (project, mixerStates, fileCache, onProgress) {
   return missing
 }
 
-// ── Export / Import JSON ──────────────────────────────────────────
-export async function exportJson (data) {
-  const jsonStr = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2)
-  if (isElectron()) {
-    const ok = await window.electronAPI.exportJson(jsonStr)
-    return ok
-  }
-  // Web: blob download
-  const blob = new Blob([jsonStr], { type: 'application/json' })
-  const url  = URL.createObjectURL(blob)
-  const a    = document.createElement('a')
-  a.href = url; a.download = `idoru-session-${Date.now()}.json`
-  a.click(); URL.revokeObjectURL(url)
-  return true
-}
-
-export async function importJson () {
-  if (isElectron()) {
-    const raw = await window.electronAPI.importJson()
-    if (!raw) return null
-    try { return JSON.parse(raw) } catch { return null }
-  }
-  // Web: FileReader
-  return new Promise((resolve) => {
-    const input = document.createElement('input')
-    input.type = 'file'; input.accept = '.json'
-    input.onchange = (e) => {
-      const file = e.target.files?.[0]
-      if (!file) { resolve(null); return }
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        try { resolve(JSON.parse(ev.target.result)) }
-        catch { resolve(null) }
-      }
-      reader.readAsText(file)
-    }
-    input.click()
-  })
-}
-
-// ── Internal helpers (duplicated from ChannelStrip to avoid circular deps) ──
+// ── Internal helpers ──────────────────────────────────────────────
 function _sanitizeName (s) {
   return (s || 'unnamed').replace(/[/\\:*?"<>|]/g, '_').slice(0, 31)
 }
@@ -372,39 +346,45 @@ function _dbToNorm (db, min = -60, max = 10) {
 }
 
 function _genSong (song, state) {
-  const mat = (state?.matrix?.length === 7) ? state.matrix : Array.from({ length: 7 }, () => Array(7).fill(0))
-  const lf  = state?.leftMutes  ?? Array(7).fill(false)
-  const lp  = state?.linkedPairs ?? [false, false, false]
-  const mod = state?.modifierDb  ?? 0
-  const IN_KEYS  = ['FileL', 'FileL', 'FileL', 'FileL', 'FileL', 'FileL', 'AuxIn']
-  const COL_KEYS = ['HeadPhone', 'Output1', 'Output2', 'Output3', 'Output4', 'Output5', 'Output6']
-  let txt = `"${song.name}"\n`
-  txt += `Level- ${Math.round(_dbToNorm(mod, -20, 20) * 100)}\n`
-  txt += `BPM- ${song.bpm ?? 120}\n`
-  const atEnd = { queue_next: 'Queue', play_next: 'Next', loop: 'Loop' }[song.queueBehavior] ?? 'Queue'
-  txt += `AtEnd- ${atEnd}\n`
-  const slots = song.audioSlots ?? []
-  const links = lp.map((on, i) => on ? `${i * 2 + 1}-${i * 2 + 2}` : null).filter(Boolean).join(' ')
-  if (links) txt += `StereoLinks- ${links}\n`
-  txt += '\nInput Files\n'
+  const mat   = (state?.matrix?.length === 7) ? state.matrix : Array.from({ length: 7 }, () => Array(7).fill(0))
+  const lf    = state?.leftMutes  ?? Array(7).fill(false)
+  const mod   = state?.modifierDb ?? 0
+  const slots = song?.audioSlots  ?? []
+  const CRLF  = '\r\n'
+  const IN_KEYS  = ['F1','F2','F3','F4','F5','F6','AN']
+  const SECTIONS = ['HeadPhone','Output1','Output2','Output3','Output4','Output5','Output6']
+  const atEnd = { queue_next: 'QueueNext', play_next: 'PlayNext', loop: 'Loop' }[song.queueBehavior] ?? 'QueueNext'
+
+  let txt = 'Global sets' + CRLF
+  txt += `Level- ${Math.round(mod)}` + CRLF
+  txt += `BPM- ${song.bpm ?? 120}` + CRLF
+  txt += `AtEnd- ${atEnd}` + CRLF + CRLF
+  txt += 'Input Files' + CRLF
   for (let i = 0; i < 6; i++) {
-    const sl = slots[i]
-    if (sl?.fileName) {
-      const label = sl.shortName || sl.fileName.slice(0, 2).toUpperCase()
-      txt += `"${sl.fileName}" ${label} ${sl.stereo ? 'Stereo' : 'Mono'}\n`
-    }
+    const sl = slots[i] ?? {}
+    txt += `F${i+1}- "${sl.shortName || `F${i+1}`}" "${sl.fileName || ''}"` + CRLF
   }
-  if (song.midiFile) txt += `\nMIDI\n"${song.midiFile}"\n`
-  const nonZeroCols = [0, 1, 2, 3, 4, 5, 6].filter(c => mat.some(row => row[c] > 0))
-  nonZeroCols.forEach(colIdx => {
-    txt += `\n${COL_KEYS[colIdx]}\n`
+  txt += `MIDI- ${song.midiFile ? `"${song.midiFile}"` : ''}` + CRLF + CRLF
+  SECTIONS.forEach((section, colIdx) => {
+    txt += section + CRLF
     for (let inIdx = 0; inIdx < 7; inIdx++) {
       const level = mat[inIdx][colIdx]
       const mute  = lf[inIdx] ? ' MUTE' : ''
-      txt += `IN${inIdx + 1}- ${IN_KEYS[inIdx]} ${level}${mute}\n`
+      txt += `IN${inIdx+1}- ${IN_KEYS[inIdx]} ${level}${mute}` + CRLF
     }
+    txt += CRLF
   })
   return txt
+}
+
+function _genFileMap (song) {
+  const map   = {}
+  const slots = song?.audioSlots ?? []
+  for (const sl of slots) {
+    if (sl?.fileName && sl?.fileUUID) map[sl.fileUUID] = `${sl.fileName}.wav`
+  }
+  if (song?.midiFile && song?.midiFileUUID) map[song.midiFileUUID] = `${song.midiFile}.mid`
+  return map
 }
 
 function _genSetlist (playlist, songs, mixerStates) {
@@ -413,15 +393,17 @@ function _genSetlist (playlist, songs, mixerStates) {
   const lp    = first.linkedPairs ?? [false, false, false]
   const lvl   = (i) => Math.round(_dbToNorm(rf[i]?.db ?? 0) * 100)
   const links = lp.map((on, i) => on ? `${i * 2 + 1}-${i * 2 + 2}` : null).filter(Boolean).join(' ')
-  let txt = 'Global sets\n'
-  if (links) txt += `StereoLinks- ${links}\n`
-  txt += `HeadPhone- ${lvl(6)}\n`
-  for (let i = 0; i < 6; i++) txt += `Output${i + 1}- ${lvl(i)}\n`
-  txt += '\nSongs\n'
-  songs.forEach(s => { txt += `"${s.name}"\n` })
+  const CRLF  = '\r\n'
+  let txt = 'SetList file' + CRLF + CRLF
+  txt += 'Global sets' + CRLF
+  if (links) txt += `StereoLinks- ${links}` + CRLF
+  txt += `HeadPhone- ${lvl(6)}` + CRLF
+  for (let i = 0; i < 6; i++) txt += `Output${i+1}- ${lvl(i)}` + CRLF
+  txt += CRLF + 'Songs' + CRLF
+  songs.forEach(s => { txt += `"${s.name}"` + CRLF })
+  txt += CRLF
   return txt
 }
-
 // ── WAV info (browser version, used by web-mode pickers) ─────────
 //  This is injected at runtime by ChannelStrip.jsx via setPlatformWavReader()
 let _readWavInfo = async () => null

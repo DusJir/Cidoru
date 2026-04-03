@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CIdoru — User Manual</title>
+<style>
+  :root {
+    --bg:        #07080d;
+    --bg-card:   #0d1520;
+    --bg-code:   #0a1018;
+    --border:    #1e2d40;
+    --accent:    #3a9fd0;
+    --accent2:   #39d353;
+    --warn:      #f5c842;
+    --danger:    #ff6b35;
+    --text:      #c0cfe0;
+    --text-dim:  #5a7a9a;
+    --text-head: #e8f0f8;
+    --font-sans: 'Roboto', 'Segoe UI', sans-serif;
+    --font-mono: 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.75;
+  }
+
+  /* ── Layout ─────────────────────────────────── */
+  .page {
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    background: #070b10;
+    border-right: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 32px 0 40px;
+  }
+
+  .sidebar-logo {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    padding: 0 24px 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+
+  .sidebar-logo span { color: var(--accent); }
+
+  .toc-list {
+    list-style: none;
+    padding: 0 12px;
+  }
+
+  .toc-list li a {
+    display: block;
+    padding: 6px 12px;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    text-decoration: none;
+    border-radius: 4px;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .toc-list li a:hover {
+    background: #0d1520;
+    color: var(--accent);
+  }
+
+  .toc-list li a .num {
+    display: inline-block;
+    width: 22px;
+    color: #2a4050;
+    font-weight: 700;
+  }
+
+  /* Content */
+  .content {
+    flex: 1;
+    min-width: 0;
+    max-width: 860px;
+    padding: 56px 64px 100px;
+  }
+
+  /* ── Typography ──────────────────────────────── */
+  h1 {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--text-head);
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+
+  .version {
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 48px;
+  }
+
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-head);
+    letter-spacing: -0.01em;
+    margin: 56px 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    scroll-margin-top: 24px;
+  }
+
+  h2 .section-num {
+    color: var(--accent);
+    margin-right: 10px;
+    font-size: 14px;
+    font-weight: 400;
+  }
+
+  h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 28px 0 10px;
+    scroll-margin-top: 24px;
+  }
+
+  p { margin-bottom: 14px; }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  strong { color: var(--text-head); font-weight: 700; }
+  em     { color: #8ab0c8; font-style: italic; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: #7ab8d8;
+  }
+
+  pre {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    color: #5a8aaa;
+    margin: 18px 0;
+    line-height: 1.6;
+  }
+
+  /* ── Lists ───────────────────────────────────── */
+  ul, ol {
+    padding-left: 24px;
+    margin-bottom: 14px;
+  }
+
+  li { margin-bottom: 6px; }
+
+  li ul, li ol { margin-top: 6px; margin-bottom: 4px; }
+
+  /* ── Callouts ────────────────────────────────── */
+  .callout {
+    display: flex;
+    gap: 12px;
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin: 18px 0;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .callout-icon { flex-shrink: 0; font-size: 16px; }
+
+  .callout--note    { background: #0d1e2c; border: 1px solid #1e3a50; }
+  .callout--warn    { background: #1a1400; border: 1px solid #4a3800; }
+  .callout--tip     { background: #0a1e10; border: 1px solid #1a4020; }
+  .callout--danger  { background: #1a0e08; border: 1px solid #4a2810; }
+
+  .callout--note   .callout-icon { color: var(--accent); }
+  .callout--warn   .callout-icon { color: var(--warn); }
+  .callout--tip    .callout-icon { color: var(--accent2); }
+  .callout--danger .callout-icon { color: var(--danger); }
+
+  /* ── Tables ──────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 18px 0;
+    font-size: 13px;
+  }
+
+  th {
+    text-align: left;
+    padding: 9px 14px;
+    background: #0a1018;
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  td {
+    padding: 9px 14px;
+    border: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: top;
+  }
+
+  tr:nth-child(even) td { background: #0a0f16; }
+
+  .check-yes { color: var(--accent2); font-weight: 700; }
+  .check-no  { color: #4a3030; font-weight: 700; }
+
+  /* Keyboard key badge */
+  kbd {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: #141e2c;
+    border: 1px solid #2a3a50;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 7px;
+    color: #8ab0c8;
+    white-space: nowrap;
+  }
+
+  /* ── Definition list ─────────────────────────── */
+  dl { margin-bottom: 14px; }
+  dt { font-weight: 700; color: var(--text-head); margin-top: 14px; }
+  dd { margin-left: 20px; color: var(--text); }
+
+  /* ── Section divider ─────────────────────────── */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 48px 0;
+  }
+
+  /* ── Scrollbar ───────────────────────────────── */
+  ::-webkit-scrollbar       { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: #07080d; }
+  ::-webkit-scrollbar-thumb { background: #1a2535; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ═══════════════════ SIDEBAR ═══════════════════ -->
+<nav class="sidebar">
+  <div class="sidebar-logo"><span>CI</span>DORU &nbsp;·&nbsp; MANUAL</div>
+  <ol class="toc-list">
+    <li><a href="#s1"><span class="num">1.</span>Introduction</a></li>
+    <li><a href="#s2"><span class="num">2.</span>Concepts</a></li>
+    <li><a href="#s3"><span class="num">3.</span>Interface Overview</a></li>
+    <li><a href="#s4"><span class="num">4.</span>Playlists</a></li>
+    <li><a href="#s5"><span class="num">5.</span>Songs</a></li>
+    <li><a href="#s6"><span class="num">6.</span>Mixer — Fader View</a></li>
+    <li><a href="#s7"><span class="num">7.</span>Mixer — Matrix View</a></li>
+    <li><a href="#s8"><span class="num">8.</span>Routing Map</a></li>
+    <li><a href="#s9"><span class="num">9.</span>Presets</a></li>
+    <li><a href="#s10"><span class="num">10.</span>Session Management</a></li>
+    <li><a href="#s11"><span class="num">11.</span>SD Card Transfer</a></li>
+    <li><a href="#s12"><span class="num">12.</span>Firmware Manager</a></li>
+    <li><a href="#s13"><span class="num">13.</span>File Scan &amp; Relink</a></li>
+    <li><a href="#s14"><span class="num">14.</span>Keyboard Shortcuts</a></li>
+    <li><a href="#s15"><span class="num">15.</span>Connection Limit</a></li>
+    <li><a href="#s16"><span class="num">16.</span>Validation Rules</a></li>
+    <li><a href="#s17"><span class="num">17.</span>Browser Compatibility</a></li>
+    <li><a href="#s18"><span class="num">18.</span>Desktop App (Electron)</a></li>
+    <li><a href="#s19"><span class="num">19.</span>Theme</a></li>
+    <li><a href="#s20"><span class="num">20.</span>Contact</a></li>
+  </ol>
+</nav>
+
+<!-- ═══════════════════ CONTENT ═══════════════════ -->
+<main class="content">
+
+<h1>CIdoru — User Manual</h1>
+<div class="version">Version 1.4</div>
+
+<!-- 1 -->
+<h2 id="s1"><span class="section-num">1</span>Introduction</h2>
+<p>CIdoru is an alternative companion application for the IDORU P-1 multi-track player. It allows you to create and manage setlists, songs, and audio routing configurations, and to export those configurations — along with your audio and MIDI files — to an SD card in the format the P-1 hardware expects.</p>
+<p>CIdoru is a web-based application. Everything runs in your browser. Your session data is stored in the browser's local storage. It is strongly recommended to export your session as a JSON file regularly to avoid data loss.</p>
+<div class="callout callout--warn">
+  <span class="callout-icon">⚠</span>
+  <span>CIdoru is third-party software, unrelated to Idoru Live UG. For any issues or questions contact <a href="mailto:cidoru.app@gmail.com">cidoru.app@gmail.com</a> — not the Idoru Live UG team.</span>
+</div>
+
+<!-- 2 -->
+<h2 id="s2"><span class="section-num">2</span>Concepts</h2>
+<p>Understanding these four terms is essential before using CIdoru.</p>
+
+<h3>Session</h3>
+<p>A session is the complete state of everything in CIdoru — all playlists, songs, mixer settings, and routing configurations. You save a session to the browser's local storage, or export it as a <code>.json</code> file to your disk.</p>
+
+<h3>Setlist (Playlist)</h3>
+<p>A setlist is an ordered collection of songs prepared for a specific occasion — for example, one gig. The P-1 hardware can hold up to <strong>7 setlists</strong> per SD card. CIdoru enforces this limit. A setlist also stores the output volume levels and stereo pair assignments for all hardware outputs.</p>
+
+<h3>Song</h3>
+<p>A song is one track in a setlist. It contains references to up to six WAV audio files (F1–F6) and an optional MIDI file, plus the gain and routing settings for those files. One setlist can hold up to <strong>40 songs</strong>. Every song in the same setlist must have a unique name.</p>
+
+<h3>Preset</h3>
+<p>A preset is a saved snapshot of the mixer state — routing, fader positions, mute states, and stereo links — that can be applied to a new song as a starting point. Presets do <strong>not</strong> store song metadata (name, BPM, queue behaviour) or audio file assignments.</p>
+
+<!-- 3 -->
+<h2 id="s3"><span class="section-num">3</span>Interface Overview</h2>
+<p>The CIdoru interface has three vertical columns, a toolbar at the top, and an info bar at the bottom.</p>
+<pre>
+┌──────────────────────────────────────────────────────────────┐
+│  TOOLBAR                                                     │
+├──────────────┬───────────────────────────────────┬──────────┤
+│              │                                   │          │
+│  PLAYLISTS   │                                   │          │
+│  (top half)  │         MIXER / MATRIX            │   HELP   │
+├──────────────┤                                   │          │
+│              │                                   │          │
+│    SONGS     │                                   │          │
+│ (bottom half)│                                   │          │
+├──────────────┴───────────────────────────────────┴──────────┤
+│  INFO BAR                                                    │
+└──────────────────────────────────────────────────────────────┘</pre>
+
+<dl>
+  <dt>Left column (12%)</dt>
+  <dd>Playlists in the top half, songs of the selected playlist in the bottom half. Both sections scroll independently.</dd>
+  <dt>Centre column</dt>
+  <dd>The mixer in classic fader view, or the routing matrix in matrix view. This is the main workspace.</dd>
+  <dt>Right column (10%)</dt>
+  <dd>Context-sensitive help text that updates based on what you are doing.</dd>
+  <dt>Toolbar</dt>
+  <dd>All session-level actions: New, Save, Load, Export, Import, Preset, Scan, Transfer, Firmware, view switcher, and Manual.</dd>
+  <dt>Info bar</dt>
+  <dd>Status messages. Messages auto-clear after a few seconds.</dd>
+</dl>
+
+<!-- 4 -->
+<h2 id="s4"><span class="section-num">4</span>Playlists</h2>
+
+<h3>Creating a playlist</h3>
+<p>Click the <strong>+</strong> button in the Playlists pane header. A modal window will appear. Enter a name and click <strong>Save</strong>.</p>
+
+<h3>Naming rules</h3>
+<p>Playlist names follow the P-1 naming convention: letters a–z and A–Z, digits 0–9, a space, and the symbols <code>! @ # $ % ^ _ = + - &amp; ( )</code>. Maximum <strong>32 characters</strong>. Invalid characters are filtered out automatically as you type.</p>
+
+<h3>Selecting a playlist</h3>
+<p>Click on a playlist row. The Songs pane will update to show the songs belonging to that playlist. The mixer remains inactive until a song is also selected.</p>
+
+<h3>Editing a playlist</h3>
+<p>Click the <strong>✎</strong> icon on the playlist row. The same modal used for creation will appear, pre-filled with the current name.</p>
+
+<h3>Duplicating a playlist</h3>
+<p>Click the <strong>⧉</strong> icon. A copy of the playlist and all its songs is created immediately, with "copy" appended to the name. The 7-playlist limit is checked — if already at 7, an error is shown.</p>
+
+<h3>Reordering playlists</h3>
+<p>Use the <strong>↑</strong> and <strong>↓</strong> arrow buttons on each row. The order here matches the order in which setlists appear on the SD card.</p>
+
+<h3>Deleting a playlist</h3>
+<p>Click the <strong>✕</strong> icon. A confirmation dialog will appear warning that all songs in the playlist will also be deleted.</p>
+
+<!-- 5 -->
+<h2 id="s5"><span class="section-num">5</span>Songs</h2>
+
+<h3>Creating a song</h3>
+<p>Select a playlist first, then click the <strong>+</strong> button in the Songs pane header. The <strong>New Song</strong> window will open.</p>
+
+<h3>New Song window</h3>
+<p><strong>Assign to Playlist(s)</strong> — When creating a new song you can assign it to one or more playlists simultaneously. The active playlist is pre-selected. If more than one playlist is selected, the song is duplicated into each one independently.</p>
+<p><strong>Start from Preset (optional)</strong> — If any presets have been saved, a dropdown appears. Selecting a preset applies its routing, fader levels, mute states, and stereo links to the new song. Audio file assignments are not copied.</p>
+<p><strong>Song Details:</strong></p>
+<ul>
+  <li><strong>Name</strong> — Required. Follows P-1 naming rules (32 characters max).</li>
+  <li><strong>BPM</strong> — Tempo displayed on the P-1 screen. Visual reference only.</li>
+  <li><strong>Queue</strong> — What happens when the song ends: <em>Queue Next</em> (waits for trigger), <em>Play Next</em> (auto-advances), or <em>Loop</em>.</li>
+  <li><strong>MIDI</strong> — Optional. Filename without <code>.mid</code>. Use <strong>↑ MID</strong> to browse.</li>
+</ul>
+<p><strong>Audio Files — F1 to F6:</strong><br>Each slot has a mono/stereo toggle, a two-character display name (e.g. BD, SY), a filename field, and a <strong>↑ WAV</strong> browse button. Picking a WAV file auto-fills the name, detects stereo/mono from the header, and validates sample rate and bit depth. Warnings appear below the slot if the file is not 44.1 kHz / 16-bit.</p>
+
+<h3>Editing, duplicating, reordering, deleting</h3>
+<p>Use the <strong>✎</strong>, <strong>⧉</strong>, <strong>↑/↓</strong>, and <strong>✕</strong> icons on each song row, same as playlists. Song order is the playback order on the P-1. The 40-song-per-playlist limit is enforced on creation and duplication.</p>
+
+<!-- 6 -->
+<h2 id="s6"><span class="section-num">6</span>The Mixer — Classic Fader View</h2>
+<p>The mixer becomes active when a song is selected. It has two fader banks.</p>
+
+<h3>INPUT BANK (left)</h3>
+<p>The seven faders represent the audio sources: <strong>AF 01–AF 06</strong> (WAV slots) and <strong>AUX IN</strong> (analogue input, always mono). Each fader controls the <em>gain</em> of that source into the currently selected output(s). The left bank is dimmed and non-interactive when no output is selected.</p>
+
+<h3>OUTPUT BANK (right)</h3>
+<p>The seven faders represent the hardware outputs: <strong>OUT 1–OUT 6</strong> and <strong>PHONES</strong>. Each controls the <em>volume</em> of that output — these values map to setlist-level output volumes in the P-1 file. Below the strips is the <strong>M.TRIM</strong> knob: a global gain offset for the song (−20 to +20 dB). Double-click to reset to 0 dB.</p>
+
+<h3>Selecting an output for routing</h3>
+<p>Click a strip in the OUTPUT BANK to select it. The INPUT BANK activates. Hold <strong>Shift</strong> and click to add more outputs to the selection — moving an input fader then writes to all selected outputs simultaneously.</p>
+
+<h3>Stereo linking</h3>
+<p>Adjacent output pairs (OUT 1+2, OUT 3+4, OUT 5+6) can be linked using the <strong>LINK</strong> button on the even-numbered strip. When linked, both outputs share the same volume, routing values mirror automatically, and routing a source to the pair costs 2 connections.</p>
+
+<h3>Mute</h3>
+<p>Each strip has an <strong>M</strong> button. Muted inputs cost 0 connections. Muted outputs are silenced in hardware.</p>
+
+<h3>Strip reset</h3>
+<p>Each audio file strip (AF 01–AF 06) has an <strong>R</strong> button next to the mute button. Clicking it resets that strip completely:</p>
+<ul>
+  <li>Removes the assigned audio file.</li>
+  <li>Clears the short name label back to the default.</li>
+  <li>Zeros the routing level to all outputs.</li>
+  <li>Unmutes the strip.</li>
+  <li>Resets the channel mode to mono.</li>
+</ul>
+<p>AUX IN and all right bank strips do not have a reset button — only the six audio file slots can be reset this way. If you want to remove a file assignment without resetting all values, open <strong>Edit Song</strong> and clear the filename field manually.</p>
+
+<h3>File occupancy indicator</h3>
+<p>Each input strip (AF 01–AF 06) shows a small indicator below the M and ↑ buttons. A dim grey dot means no file is assigned to that slot. A green dot with the slot's two-character short name means a file is assigned. Hovering over the indicator shows a tooltip with the full filename. Click the <strong>↑</strong> button to assign or reassign a file.</p>
+
+<h3>Value readout</h3>
+<p>Each strip shows its value below the fader — dB for outputs, 0–100 for inputs in routing mode (90 ≈ unity). Double-click the readout to type a value. Double-click the rider to snap to unity.</p>
+
+<!-- 7 -->
+<h2 id="s7"><span class="section-num">7</span>The Mixer — Matrix View</h2>
+<p>Click <strong>MATRIX</strong> in the toolbar to switch views. The matrix shows the full 7×7 input/output routing table as an editable grid.</p>
+<ul>
+  <li><strong>Rows</strong> — inputs: AF 01–AF 06, AUX IN</li>
+  <li><strong>Columns</strong> — outputs: HP, OUT 1–OUT 6</li>
+  <li><strong>Values</strong> — 0 to 100. Zero means no routing. 90 ≈ unity gain.</li>
+</ul>
+<p>Navigate cells with <kbd>Tab</kbd>. Linked columns are highlighted and always mirror each other.</p>
+
+<!-- 8 -->
+<h2 id="s8"><span class="section-num">8</span>Routing Map</h2>
+<p>Below the mixer (in both views) is a read-only dynamic overview of all active routing connections. Each output with at least one source routed to it appears as a box showing the connected sources with their levels, colour-coded by value. Currently selected outputs are highlighted. This panel is for information only — values are changed in the fader or matrix view.</p>
+
+<!-- 9 -->
+<h2 id="s9"><span class="section-num">9</span>Presets</h2>
+
+<h3>Saving a preset</h3>
+<ol>
+  <li>Select a song with the mixer state you want to save.</li>
+  <li>Click <strong>★ PRESET</strong> in the toolbar.</li>
+  <li>Enter a name and optional comment, then click <strong>Save Preset</strong>.</li>
+</ol>
+<p>Presets are stored in browser local storage independently of the session — they survive loading a different session.</p>
+
+<h3>Applying a preset</h3>
+<p>When creating a new song, a <strong>Start from Preset</strong> dropdown appears if any presets exist. Select one to apply its routing and fader values. Audio file slots are left empty.</p>
+
+<!-- 10 -->
+<h2 id="s10"><span class="section-num">10</span>Session Management</h2>
+
+<h3>Save</h3>
+<p>Writes the session to browser local storage. The <strong>SAVE</strong> button glows amber when there are unsaved changes.</p>
+
+<h3>Load</h3>
+<p>Reloads the session from local storage, discarding any unsaved in-memory changes.</p>
+
+<h3>New Session</h3>
+<p>Resets everything to a blank state. If there are unsaved changes, a confirmation dialog warns you first. Local storage is not affected until you click Save.</p>
+
+<h3>Export JSON</h3>
+<p>Saves the complete session as a <code>.json</code> file to your downloads folder. The filename includes a timestamp.</p>
+
+<h3>Import JSON</h3>
+<p>Opens a file picker. Select a previously exported <code>.json</code> file to restore that session.</p>
+
+<div class="callout callout--tip">
+  <span class="callout-icon">✓</span>
+  <span>Export your session as JSON after every significant editing session. Browser storage can be cleared accidentally.</span>
+</div>
+
+<!-- 11 -->
+<h2 id="s11"><span class="section-num">11</span>SD Card Transfer</h2>
+<p>Click <strong>⏏ TRANSFER</strong> to write the session to an SD card. A directory picker will open — navigate to the root of the SD card and confirm. CIdoru creates the following structure:</p>
+<pre>
+/lists/
+  {SetlistName}/
+    {SetlistName}.txt     ← setlist configuration
+    {SongName}/
+      {SongName}.txt      ← song configuration
+      {AudioFile}.wav     ← copied from your computer
+      {MidiFile}.mid      ← copied from your computer</pre>
+
+<h3>File copying</h3>
+<p>WAV and MIDI files are copied automatically — <strong>provided they were picked using the ↑ WAV / ↑ MID buttons in the current browser session</strong>. CIdoru holds the file in memory from the moment you pick it until the tab is closed.</p>
+<p>If a file was not picked in the current session (e.g. you loaded a saved session but did not re-pick the files), it will be skipped and a warning will list which files are missing. To fix it:</p>
+<ol>
+  <li>Navigate to the affected song.</li>
+  <li>Re-pick the missing file using <strong>↑ WAV</strong> or <strong>↑ MID</strong>.</li>
+  <li>Run Transfer again.</li>
+</ol>
+
+<div class="callout callout--warn">
+  <span class="callout-icon">⚠</span>
+  <span><strong>Browser limitation:</strong> the browser cannot access files on disk without the user explicitly selecting them. File references are not saved to local storage — only filenames are. Re-picking files is required once per session after loading.</span>
+</div>
+<div class="callout callout--note">
+  <span class="callout-icon">ℹ</span>
+  <span>SD card transfer requires <strong>Chrome or Edge</strong>. The File System Access API is not available in Firefox or Safari.</span>
+</div>
+
+<!-- 12 -->
+<h2 id="s12"><span class="section-num">12</span>Firmware</h2>
+<p>Click <strong>⬆ FIRMWARE</strong> in the toolbar to open the Firmware Manager. The behaviour differs between the web and desktop versions.</p>
+
+<h3>Web version</h3>
+<p>Browser security prevents downloading files from external sites programmatically. The web version shows step-by-step manual instructions. Download the <code>.bin</code> file from <a href="https://idoru.live/downloads" target="_blank">idoru.live/downloads</a> yourself, then follow the SD card instructions in the modal.</p>
+
+<h3>Desktop version (Electron) — Firmware Manager</h3>
+<p>The desktop app can check for, download, and write firmware automatically. The manager is divided into three steps.</p>
+
+<h3>Step 1 — Get firmware</h3>
+<p>Click <strong>⌕ Check for latest on idoru.live</strong>. CIdoru searches in two ways simultaneously: it scrapes the downloads page for known firmware links, and probes up to 15 minor versions ahead of the latest known release using fast HEAD requests. Results are sorted newest first. Click <strong>↓ Download</strong> next to the version you want — a progress bar shows download progress. The file is saved to your local app data folder and remembered across restarts.</p>
+
+<p>If you already have a <code>.bin</code> file on disk, click <strong>↑ Pick .bin from disk</strong> instead. CIdoru will cache its path so Step 2 works the same way.</p>
+
+<p>The status box at the top of the modal shows whether a firmware file is currently cached and which version it is. Use the <strong>✕ Clear</strong> button to remove it if needed.</p>
+
+<h3>Step 2 — Write to SD card</h3>
+<p>Once a firmware file is cached, click <strong>⏏ Select SD card &amp; write firmware</strong>. A native folder picker opens — navigate to the root of your SD card and confirm. CIdoru will:</p>
+<ul>
+  <li>Create an <code>update/</code> folder at the SD card root if it does not exist.</li>
+  <li>Clear any existing files inside <code>update/</code> (the P-1 requires exactly one <code>.bin</code> file there).</li>
+  <li>Copy the cached <code>.bin</code> file into <code>update/</code>.</li>
+</ul>
+<p>You can do this as part of a normal Transfer run or independently — firmware and session files are written separately.</p>
+
+<h3>Step 3 — Install on the device</h3>
+<ol class="firmware-steps-manual">
+  <li>Make sure the SD card has at least one setlist and song (required by the P-1).</li>
+  <li>With the pedal <strong>off</strong>, insert the SD card.</li>
+  <li>Hold the <strong>Play</strong> footswitch down and connect power. Keep holding.</li>
+  <li>Release when the firmware update message appears on the display.</li>
+  <li>Unplug and replug power to restart.</li>
+</ol>
+
+<div class="callout callout--note">
+  <span class="callout-icon">ℹ</span>
+  <span>The currently installed firmware version is shown at boot as <code>SW x.x.x</code>. The P-1 will only install a version that differs from the one currently on the device.</span>
+</div>
+<div class="callout callout--warn">
+  <span class="callout-icon">⚠</span>
+  <span>CIdoru cannot communicate with the P-1 via USB. Firmware is installed exclusively via the SD card method described above.</span>
+</div>
+
+
+<!-- 13 -->
+<h2 id="s13"><span class="section-num">13</span>File Scan &amp; Relink</h2>
+<p>Click <strong>⌕ SCAN</strong> to see all audio and MIDI file references in your session. Because CIdoru runs in a browser, it cannot verify whether files exist on disk — it only knows the filenames. If a file has moved or been renamed, click <strong>Relink</strong> next to it to point CIdoru to the new file.</p>
+<div class="callout callout--tip">
+  <span class="callout-icon">✓</span>
+  <span>Run a scan before transferring to SD card to confirm all slots have filenames assigned.</span>
+</div>
+
+<!-- 14 -->
+<h2 id="s14"><span class="section-num">14</span>Keyboard Shortcuts</h2>
+<p>Shortcuts are active when the mixer pane has focus (click anywhere on it first).</p>
+
+<table>
+  <thead><tr><th>Key</th><th>Action</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>← Arrow</kbd></td><td>Move focus to the previous strip</td></tr>
+    <tr><td><kbd>→ Arrow</kbd></td><td>Move focus to the next strip</td></tr>
+    <tr><td><kbd>↑ Arrow</kbd></td><td>Nudge focused fader up (+1 unit)</td></tr>
+    <tr><td><kbd>↓ Arrow</kbd></td><td>Nudge focused fader down (−1 unit)</td></tr>
+    <tr><td><kbd>M</kbd></td><td>Toggle mute on the focused strip</td></tr>
+    <tr><td><kbd>Space</kbd></td><td>Toggle routing selection on the focused output strip</td></tr>
+    <tr><td><kbd>Shift</kbd> + <kbd>Space</kbd></td><td>Add / remove focused output to multi-selection</td></tr>
+    <tr><td>Mouse wheel</td><td>Nudge the focused fader up or down</td></tr>
+  </tbody>
+</table>
+
+<h3>Navigation order</h3>
+<p>AF 01 → AF 02 → … → AUX IN → OUT 1 → OUT 2 → … → PHONES → M.TRIM</p>
+
+<h3>Routing workflow with keyboard</h3>
+<ol>
+  <li>Press <kbd>→</kbd> to reach an output strip on the right bank.</li>
+  <li>Press <kbd>Space</kbd> to select it — the input bank activates.</li>
+  <li>Press <kbd>←</kbd> to navigate to an input strip.</li>
+  <li>Use <kbd>↑</kbd> / <kbd>↓</kbd> or the mouse wheel to set the routing level.</li>
+  <li>Press <kbd>M</kbd> to mute/unmute the focused input.</li>
+  <li>Press <kbd>→</kbd> to reach the next output and <kbd>Space</kbd> to switch target.</li>
+</ol>
+
+<h3>Nudge step sizes</h3>
+<ul>
+  <li>Output faders (dB): <strong>1 dB</strong> per step</li>
+  <li>Input faders in routing mode (0–100): <strong>1 unit</strong> per step</li>
+  <li>M.TRIM knob: <strong>0.5 dB</strong> per step</li>
+</ul>
+
+<!-- 15 -->
+<h2 id="s15"><span class="section-num">15</span>Connection Limit</h2>
+<p>The P-1 hardware supports a maximum of <strong>32 connections</strong> per song. A live counter is displayed in the status bar above the mixer — it turns amber at 28 and red at 32.</p>
+
+<table>
+  <thead><tr><th>Scenario</th><th>Connections used</th></tr></thead>
+  <tbody>
+    <tr><td>Mono source → mono output</td><td>1</td></tr>
+    <tr><td>Mono source → linked stereo pair</td><td>2</td></tr>
+    <tr><td>Mono source → headphone output</td><td>2</td></tr>
+    <tr><td>Stereo source → any output</td><td>2</td></tr>
+    <tr><td>Any source → headphone output</td><td>2</td></tr>
+    <tr><td>Muted source</td><td>0</td></tr>
+  </tbody>
+</table>
+
+<div class="callout callout--tip">
+  <span class="callout-icon">✓</span>
+  <span>Muting unused sources frees their connections — the fastest way to stay within the limit during complex mixes.</span>
+</div>
+
+<!-- 16 -->
+<h2 id="s16"><span class="section-num">16</span>Validation Rules</h2>
+<p>All names and filenames are validated against the P-1's requirements before saving.</p>
+<ul>
+  <li><strong>Allowed characters:</strong> <code>a–z A–Z 0–9</code>, space, and <code>! @ # $ % ^ _ = + - &amp; ( )</code></li>
+  <li><strong>Maximum length:</strong> 32 characters</li>
+  <li><strong>WAV files:</strong> must be 44.1 kHz sample rate and 16-bit depth</li>
+</ul>
+<p>Invalid characters are filtered out as you type. The Save button is disabled until all fields pass validation. WAV format warnings are shown per slot but do not block saving — the file can still be assigned, though it may not play correctly on the P-1.</p>
+
+<!-- 17 -->
+<h2 id="s17"><span class="section-num">17</span>Browser Compatibility</h2>
+
+<table>
+  <thead><tr><th>Feature</th><th>Chrome</th><th>Edge</th><th>Firefox</th><th>Safari</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Full interface</td>
+      <td class="check-yes">✓</td><td class="check-yes">✓</td>
+      <td class="check-yes">✓</td><td class="check-yes">✓</td>
+    </tr>
+    <tr>
+      <td>WAV header reading</td>
+      <td class="check-yes">✓</td><td class="check-yes">✓</td>
+      <td class="check-yes">✓</td><td class="check-yes">✓</td>
+    </tr>
+    <tr>
+      <td>SD card transfer</td>
+      <td class="check-yes">✓</td><td class="check-yes">✓</td>
+      <td class="check-no">✗</td><td class="check-no">✗</td>
+    </tr>
+    <tr>
+      <td>Export / Import JSON</td>
+      <td class="check-yes">✓</td><td class="check-yes">✓</td>
+      <td class="check-yes">✓</td><td class="check-yes">✓</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- 18 -->
+<h2 id="s18"><span class="section-num">18</span>Desktop App (Electron)</h2>
+<p>CIdoru is available as a downloadable desktop application for Windows and Linux in addition to the browser version. The desktop app offers several advantages over the web version.</p>
+
+<h3>Advantages over the web version</h3>
+<table>
+  <thead><tr><th>Feature</th><th>Web</th><th>Desktop</th></tr></thead>
+  <tbody>
+    <tr><td>Session persistence</td><td>localStorage (cleared if browser data is wiped)</td><td>File on disk — survives browser resets</td></tr>
+    <tr><td>File paths remembered</td><td class="check-no">✗ Must re-pick each session</td><td class="check-yes">✓ Paths stored, survive restart</td></tr>
+    <tr><td>SD card transfer</td><td>Chrome / Edge only</td><td class="check-yes">✓ All platforms, native dialog</td></tr>
+    <tr><td>Scan verifies files exist</td><td class="check-no">✗ Names only</td><td class="check-yes">✓ Checks disk</td></tr>
+    <tr><td>Export / Import dialogs</td><td>Browser download / file input</td><td>Native OS save / open dialog</td></tr>
+    <tr><td>Works offline</td><td class="check-no">✗ Needs server</td><td class="check-yes">✓ Fully offline</td></tr>
+  </tbody>
+</table>
+
+<h3>Installation — Windows</h3>
+<p>Download <code>CIdoru-Setup-x.x.x.exe</code> from the CIdoru website. Run the installer. Windows will probably show an "Unknown Publisher" warning — click <strong>More info → Run anyway</strong>. This is expected behaviour for unsigned software; the original Idoru application behaves the same way.</p>
+
+<h3>Installation — Linux</h3>
+<p>Download <code>CIdoru-Setup-x.x.x.AppImage</code>. Make it executable and run it:</p>
+<pre>
+chmod +x CIdoru-Setup-x.x.x.AppImage
+./CIdoru-Setup-x.x.x.AppImage</pre>
+<p>No installation required. Data is stored in <code>~/.config/cidoru/</code>.</p>
+
+<h3>File path persistence</h3>
+<p>When you pick a WAV or MIDI file in the desktop app, CIdoru stores the full path to that file. The path survives app restarts — you do not need to re-pick files before transferring to SD card, as long as the files have not moved. If a file has moved, use <strong>⌕ SCAN</strong> to detect and relink it.</p>
+
+<h3>Session storage location</h3>
+<ul>
+  <li><strong>Windows:</strong> <code>%APPDATA%\cidoru\session.json</code></li>
+  <li><strong>Linux:</strong> <code>~/.config/cidoru/session.json</code></li>
+  <li><strong>Presets:</strong> same folder, <code>presets.json</code></li>
+</ul>
+<div class="callout callout--tip">
+  <span class="callout-icon">✓</span>
+  <span>Session and preset files are plain JSON — back them up, version-control them, or copy them between machines manually.</span>
+</div>
+
+<!-- 19 -->
+<h2 id="s19"><span class="section-num">19</span>Theme</h2>
+<p>CIdoru supports a dark theme (default) and a light theme. Click <strong>☀ LIGHT</strong> / <strong>☾ DARK</strong> in the toolbar to toggle. The preference is remembered across sessions.</p>
+<p>Both themes support all functionality identically. The light theme is suited to bright environments such as daylit rehearsal spaces or outdoor stages.</p>
+
+<!-- 20 -->
+<h2 id="s20"><span class="section-num">20</span>Contact</h2>
+<p>CIdoru is developed and maintained by a semi-professional musician and professional software developer with over 30 years of experience in both fields, based in the Czech Republic.</p>
+<p>For bug reports, questions, or feedback: <a href="mailto:cidoru.app@gmail.com">cidoru.app@gmail.com</a></p>

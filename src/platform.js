@@ -90,7 +90,7 @@ export function getInitialPresets () {
 
 // ── Session persistence ───────────────────────────────────────────
 export async function saveSession (data) {
-  _initSessionCache = data   // update in-memory cache immediately
+  _initSessionCache = data
   if (isElectron()) {
     return window.electronAPI.session.save(data)
   }
@@ -108,6 +108,34 @@ export async function loadSession () {
     const r = localStorage.getItem(STORAGE_KEY)
     return r ? JSON.parse(r) : null
   } catch { return null }
+}
+
+// ── File cache persistence (Electron only) ────────────────────────
+// Saves { key: filePath } map to disk so paths survive app restarts.
+export async function saveFileCache (cacheMap) {
+  if (!isElectron()) return
+  const obj = {}
+  for (const [key, val] of cacheMap) {
+    if (typeof val === 'string') obj[key] = val   // only persist paths, not File objects
+  }
+  return window.electronAPI.fileCache.save(obj)
+}
+
+export async function loadFileCache (cacheMap) {
+  if (!isElectron()) return
+  const obj = await window.electronAPI.fileCache.load()
+  if (!obj) return
+  for (const [key, path] of Object.entries(obj)) {
+    if (typeof path === 'string' && !cacheMap.has(key)) {
+      cacheMap.set(key, path)
+    }
+  }
+}
+
+// Folder scan — returns { nameNoExt: absolutePath } or null
+export async function scanFolder () {
+  if (!isElectron()) return null
+  return window.electronAPI.scan.folder()
 }
 
 // ── Preset persistence ────────────────────────────────────────────
@@ -239,7 +267,6 @@ export async function scanVerify (fileCache) {
 // ── SD Card Transfer ──────────────────────────────────────────────
 export async function transfer (project, mixerStates, fileCache, onProgress) {
   if (isElectron()) {
-    // Convert cache to {key: path} — only string paths go to main process
     const filePaths = {}
     for (const [key, val] of fileCache) {
       if (typeof val === 'string') filePaths[key] = val
@@ -247,14 +274,20 @@ export async function transfer (project, mixerStates, fileCache, onProgress) {
     const cleanup = window.electronAPI.transfer.onProgress(onProgress)
     try {
       const result = await window.electronAPI.transfer.start(project, mixerStates, filePaths)
-      if (!result.ok) throw new Error(result.error || 'Transfer failed')
-      return result.missing ?? []
+      if (result.error) throw new Error(result.error)
+      return {
+        missing:  result.missing  ?? [],
+        copied:   result.copied   ?? 0,
+        skipped:  result.skipped  ?? 0,
+        aborted:  result.aborted  ?? false,
+      }
     } finally {
       cleanup()
     }
   }
-  // Web: File System Access API
-  return webTransfer(project, mixerStates, fileCache, onProgress)
+  // Web: returns array of missing files
+  const missing = await webTransfer(project, mixerStates, fileCache, onProgress)
+  return { missing, copied: 0, skipped: 0, aborted: false }
 }
 
 // ── Web transfer (File System Access API) ─────────────────────────

@@ -1,7 +1,7 @@
 {
   "name": "cidoru",
   "productName": "CIdoru",
-  "version": "1.6.0",
+  "version": "1.8.0",
   "description": "Alternative companion application for the IDORU P-1 multi-track player",
   "author": "Barney Estrada <barney.estrada@bastardizer.cz>",
   "homepage": "https://dev.grinware.cz",
@@ -29,6 +29,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "electron":             "^33.0.0",
+
     "electron-builder":     "^25.1.0",
     "electron-vite":        "^2.3.0",
     "vite":                 "^5.4.0"

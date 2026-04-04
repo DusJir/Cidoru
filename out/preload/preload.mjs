@@ -52,7 +52,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   // Scan — verify cached paths still exist
   scan: {
-    verify: (filePaths) => ipcRenderer.invoke("scan:verify", filePaths)
+    verify: (filePaths) => ipcRenderer.invoke("scan:verify", filePaths),
+    folder: () => ipcRenderer.invoke("scan:folder")
+  },
+  fileCache: {
+    save: (cacheObj) => ipcRenderer.invoke("filecache:save", cacheObj),
+    load: () => ipcRenderer.invoke("filecache:load")
   },
   // SD card transfer
   transfer: {

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { basename, join } from "path";
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
+import { mkdir, writeFile, readFile } from "fs/promises";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
@@ -9,6 +9,7 @@ const require2 = __cjs_mod__.createRequire(import.meta.url);
 const userData = () => app.getPath("userData");
 const sessionPath = () => join(userData(), "session.json");
 const presetsPath = () => join(userData(), "presets.json");
+const fileCachePath = () => join(userData(), "file-cache.json");
 function readWavInfoNode(buf) {
   if (buf.length < 12) return null;
   if (buf.toString("ascii", 0, 4) !== "RIFF" && buf.toString("ascii", 0, 4) !== "RF64") return null;
@@ -48,6 +49,8 @@ async function doTransfer(project, mixerStates, filePaths, sender) {
   await mkdir(listsDir, { recursive: true });
   await mkdir(join(root, "update"), { recursive: true });
   const missing = [];
+  const copied = [];
+  const skipped = [];
   async function writeIfChanged(filePath, content) {
     try {
       const existing = readFileSync(filePath, "utf-8");
@@ -57,19 +60,71 @@ async function doTransfer(project, mixerStates, filePaths, sender) {
     await writeFile(filePath, content, "utf-8");
     return true;
   }
-  async function writeIfChangedBytes(filePath, bytes) {
+  async function copyIfSizeDiffers(srcPath, destPath, label) {
     try {
-      const existing = readFileSync(filePath);
-      if (existing.equals(bytes)) return false;
-    } catch (_) {
+      const srcStat = statSync(srcPath);
+      try {
+        const destStat = statSync(destPath);
+        if (destStat.size === srcStat.size) {
+          skipped.push(label);
+          return false;
+        }
+      } catch (_) {
+      }
+      const bytes = await readFile(srcPath);
+      await writeFile(destPath, bytes);
+      copied.push(label);
+      sender.send("transfer:progress", `  ✓ ${label}`);
+      return true;
+    } catch (err) {
+      sender.send("transfer:progress", `  ✗ ${label} — ${err.message}`);
+      return false;
     }
-    await writeFile(filePath, bytes);
-    return true;
+  }
+  const preflight = [];
+  for (const pl of project.playlists) {
+    const songs = project.songs.filter((s) => s.playlistId === pl.id);
+    const plName = sanitizeName(pl.name);
+    for (const song of songs) {
+      const sName = sanitizeName(song.name);
+      const songDir = join(listsDir, plName, sName);
+      const slots = song.audioSlots ?? [];
+      for (let i = 0; i < slots.length; i++) {
+        const sl = slots[i];
+        if (!sl?.fileName) continue;
+        const srcPath = filePaths[`${song.id}_f${i}`];
+        const destPath = join(songDir, `${sl.fileName}.wav`);
+        const srcOk = srcPath && existsSync(srcPath);
+        const destOk = existsSync(destPath);
+        if (!srcOk && !destOk)
+          preflight.push(`${song.name} — F${i + 1}: ${sl.fileName}.wav`);
+        else if (!srcOk && destOk)
+          preflight.push(`${song.name} — F${i + 1}: ${sl.fileName}.wav (on SD but not verified — relink recommended)`);
+      }
+      if (song.midiFile) {
+        const srcPath = filePaths[`${song.id}_midi`];
+        const destPath = join(songDir, `${song.midiFile}.mid`);
+        const srcOk = srcPath && existsSync(srcPath);
+        const destOk = existsSync(destPath);
+        if (!srcOk && !destOk)
+          preflight.push(`${song.name} — MIDI: ${song.midiFile}.mid`);
+      }
+    }
+  }
+  const hardMissing = preflight.filter((p) => !p.includes("relink recommended"));
+  if (hardMissing.length > 0) {
+    sender.send("transfer:progress", `⛔ Transfer aborted — ${hardMissing.length} file(s) missing from both cache and SD card. Use Scan & Relink first.`);
+    return { missing: hardMissing, aborted: true };
+  }
+  const unverified = preflight.filter((p) => p.includes("relink recommended"));
+  if (unverified.length > 0) {
+    sender.send("transfer:progress", `⚠ ${unverified.length} file(s) not in cache — will use existing SD card copy (not size-verified). Relink recommended.`);
   }
   const sessionUUID = project.sessionUUID || "00000000-0000-4000-8000-000000000000";
-  const sessionJson = JSON.stringify({ id: sessionUUID, filePath: "", name: project.name || "CIdoru Session", deviceImport: false });
-  await writeIfChanged(join(listsDir, "session.json"), sessionJson);
-  sender.send("transfer:progress", "✓ lists/session.json");
+  await writeIfChanged(
+    join(listsDir, "session.json"),
+    JSON.stringify({ id: sessionUUID, filePath: "", name: project.name || "CIdoru Session", deviceImport: false })
+  );
   const expectedPlFolders = /* @__PURE__ */ new Set();
   for (const pl of project.playlists) {
     const songs = project.songs.filter((s) => s.playlistId === pl.id);
@@ -77,25 +132,22 @@ async function doTransfer(project, mixerStates, filePaths, sender) {
     expectedPlFolders.add(plName);
     const plDir = join(listsDir, plName);
     await mkdir(plDir, { recursive: true });
-    const songUUIDs = songs.map((s) => s.uuid || s.id);
-    const setlistJson = JSON.stringify({ id: pl.uuid || pl.id, songs: songUUIDs });
-    await writeIfChanged(join(plDir, "setlist.json"), setlistJson);
-    const slTxt = generateSetlistFile(pl, songs, mixerStates);
-    const changed = await writeIfChanged(join(plDir, `${plName}.txt`), slTxt);
-    if (changed) sender.send("transfer:progress", `✓ ${plName}/${plName}.txt`);
+    await writeIfChanged(
+      join(plDir, "setlist.json"),
+      JSON.stringify({ id: pl.uuid || pl.id, songs: songs.map((s) => s.uuid || s.id) })
+    );
+    const slTxtChanged = await writeIfChanged(join(plDir, `${plName}.txt`), generateSetlistFile(pl, songs, mixerStates));
+    if (slTxtChanged) sender.send("transfer:progress", `✓ ${plName}.txt`);
     const expectedSongFolders = /* @__PURE__ */ new Set();
     for (const song of songs) {
       const sName = sanitizeName(song.name);
       expectedSongFolders.add(sName);
       const songDir = join(plDir, sName);
       await mkdir(songDir, { recursive: true });
-      const songJson = JSON.stringify({ id: song.uuid || song.id });
-      await writeIfChanged(join(songDir, "song.json"), songJson);
-      const fileMap = generateFileMap(song);
-      await writeIfChanged(join(songDir, "fileMap.json"), JSON.stringify(fileMap));
-      const sTxt = generateSongFile(song, mixerStates[song.id]);
-      const sTxtChanged = await writeIfChanged(join(songDir, `${sName}.txt`), sTxt);
-      if (sTxtChanged) sender.send("transfer:progress", `  ✓ ${plName}/${sName}/${sName}.txt`);
+      await writeIfChanged(join(songDir, "song.json"), JSON.stringify({ id: song.uuid || song.id }));
+      await writeIfChanged(join(songDir, "fileMap.json"), JSON.stringify(generateFileMap(song)));
+      const sTxtChanged = await writeIfChanged(join(songDir, `${sName}.txt`), generateSongFile(song, mixerStates[song.id]));
+      if (sTxtChanged) sender.send("transfer:progress", `  ✓ ${sName}.txt`);
       const slots = song.audioSlots ?? [];
       for (let i = 0; i < slots.length; i++) {
         const sl = slots[i];
@@ -103,53 +155,53 @@ async function doTransfer(project, mixerStates, filePaths, sender) {
         const srcPath = filePaths[`${song.id}_f${i}`];
         const destPath = join(songDir, `${sl.fileName}.wav`);
         if (srcPath && existsSync(srcPath)) {
-          const bytes = await readFile(srcPath);
-          const copied = await writeIfChangedBytes(destPath, bytes);
-          if (copied) sender.send("transfer:progress", `  ✓ ${sl.fileName}.wav`);
+          await copyIfSizeDiffers(srcPath, destPath, `${sl.fileName}.wav`);
         } else if (!existsSync(destPath)) {
           missing.push(`${song.name} — F${i + 1}: ${sl.fileName}.wav`);
-          sender.send("transfer:progress", `  ⚠ ${sl.fileName}.wav — not found`);
+          sender.send("transfer:progress", `  ⚠ ${sl.fileName}.wav — missing`);
         }
       }
       if (song.midiFile) {
         const srcPath = filePaths[`${song.id}_midi`];
         const destPath = join(songDir, `${song.midiFile}.mid`);
         if (srcPath && existsSync(srcPath)) {
-          const bytes = await readFile(srcPath);
-          const copied = await writeIfChangedBytes(destPath, bytes);
-          if (copied) sender.send("transfer:progress", `  ✓ ${song.midiFile}.mid`);
+          await copyIfSizeDiffers(srcPath, destPath, `${song.midiFile}.mid`);
         } else if (!existsSync(destPath)) {
           missing.push(`${song.name} — MIDI: ${song.midiFile}.mid`);
-          sender.send("transfer:progress", `  ⚠ ${song.midiFile}.mid — not found`);
+          sender.send("transfer:progress", `  ⚠ ${song.midiFile}.mid — missing`);
         }
       }
     }
-    const { readdirSync: readdirSync2 } = await import("fs");
     try {
-      const existingSongFolders = readdirSync2(plDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
-      for (const folder of existingSongFolders) {
+      const existing = readdirSync(plDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+      for (const folder of existing) {
         if (!expectedSongFolders.has(folder)) {
           const { rm } = await import("fs/promises");
           await rm(join(plDir, folder), { recursive: true, force: true });
-          sender.send("transfer:progress", `  🗑 deleted song folder: ${folder}`);
+          sender.send("transfer:progress", `  🗑 deleted: ${folder}`);
         }
       }
     } catch (_) {
     }
   }
-  const { readdirSync } = await import("fs");
   try {
-    const existingPlFolders = readdirSync(listsDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
-    for (const folder of existingPlFolders) {
+    const existing = readdirSync(listsDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    for (const folder of existing) {
       if (!expectedPlFolders.has(folder)) {
         const { rm } = await import("fs/promises");
         await rm(join(listsDir, folder), { recursive: true, force: true });
-        sender.send("transfer:progress", `🗑 deleted playlist folder: ${folder}`);
+        sender.send("transfer:progress", `🗑 deleted playlist: ${folder}`);
       }
     }
   } catch (_) {
   }
-  return missing;
+  sender.send("transfer:progress", `
+── Summary ──────────────────────────────`);
+  sender.send("transfer:progress", `  ✓ copied: ${copied.length} file(s)`);
+  sender.send("transfer:progress", `  – skipped (unchanged): ${skipped.length} file(s)`);
+  if (missing.length) sender.send("transfer:progress", `  ⚠ missing: ${missing.length} file(s)`);
+  if (unverified.length) sender.send("transfer:progress", `  ⚠ unverified on SD: ${unverified.length} file(s)`);
+  return { missing, copied: copied.length, skipped: skipped.length, aborted: false };
 }
 function dbToNorm(db, min = -60, max = 10) {
   if (db <= min) return 0;
@@ -271,6 +323,51 @@ ipcMain.handle("session:load", async () => {
     return null;
   }
 });
+ipcMain.handle("filecache:save", async (_, cacheObj) => {
+  try {
+    writeFileSync(fileCachePath(), JSON.stringify(cacheObj), "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+});
+ipcMain.handle("filecache:load", async () => {
+  try {
+    return JSON.parse(readFileSync(fileCachePath(), "utf-8"));
+  } catch {
+    return null;
+  }
+});
+ipcMain.handle("scan:folder", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: "Select folder to scan for audio files",
+    buttonLabel: "Scan this folder",
+    properties: ["openDirectory"]
+  });
+  if (canceled || !filePaths[0]) return null;
+  const result = {};
+  function walk(dir) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile()) {
+        if (/\.(wav|mid|midi)$/i.test(entry.name)) {
+          const nameNoExt = entry.name.replace(/\.(wav|mid|midi)$/i, "");
+          if (!result[nameNoExt]) result[nameNoExt] = full;
+        }
+      }
+    }
+  }
+  walk(filePaths[0]);
+  return result;
+});
 ipcMain.handle("presets:save", async (_, data) => {
   try {
     writeFileSync(presetsPath(), JSON.stringify(data, null, 2), "utf-8");
@@ -345,10 +442,10 @@ ipcMain.handle("scan:verify", async (_, filePaths) => {
 });
 ipcMain.handle("transfer:start", async (event, project, mixerStates, filePaths) => {
   try {
-    const missing = await doTransfer(project, mixerStates, filePaths, event.sender);
-    return { ok: true, missing };
+    const result = await doTransfer(project, mixerStates, filePaths, event.sender);
+    return { ok: !result.aborted, ...result };
   } catch (err) {
-    return { ok: false, error: err.message, missing: [] };
+    return { ok: false, error: err.message, missing: [], aborted: false };
   }
 });
 ipcMain.handle("export:json", async (_, jsonStr) => {
@@ -583,8 +680,8 @@ ipcMain.handle("firmware:writeToSd", async (_, sdRootPath, firmwarePath) => {
   try {
     const updateDir = join(sdRootPath, "update");
     mkdirSync(updateDir, { recursive: true });
-    const { readdirSync, unlinkSync } = await import("fs");
-    const existing = readdirSync(updateDir);
+    const { readdirSync: readdirSync2, unlinkSync } = await import("fs");
+    const existing = readdirSync2(updateDir);
     for (const f of existing) {
       try {
         unlinkSync(join(updateDir, f));

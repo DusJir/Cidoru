@@ -26,7 +26,7 @@
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: var(--font-sans);
+    font-family: var(--font-sans), sans-serif;
     font-size: 15px;
     line-height: 1.75;
   }
@@ -306,7 +306,7 @@
 <main class="content">
 
 <h1>CIdoru — User Manual</h1>
-<div class="version">Version 1.4</div>
+<div class="version">Version 1.8.0</div>
 
 <!-- 1 -->
 <h2 id="s1"><span class="section-num">1</span>Introduction</h2>
@@ -314,7 +314,7 @@
 <p>CIdoru is a web-based application. Everything runs in your browser. Your session data is stored in the browser's local storage. It is strongly recommended to export your session as a JSON file regularly to avoid data loss.</p>
 <div class="callout callout--warn">
   <span class="callout-icon">⚠</span>
-  <span>CIdoru is third-party software, unrelated to Idoru Live UG. For any issues or questions contact <a href="mailto:cidoru.app@gmail.com">cidoru.app@gmail.com</a> — not the Idoru Live UG team.</span>
+  <span>CIdoru is third-party software, unrelated to Idoru Live UG. For any issues or questions contact <a href="/cdn-cgi/l/email-protection#53303a373c21267d32232313343e323a3f7d303c3e"><span class="__cf_email__" data-cfemail="3a59535e55484f145b4a4a7a5d575b535614595557">[email&#160;protected]</span></a> — not the Idoru Live UG team.</span>
 </div>
 
 <!-- 2 -->
@@ -498,32 +498,47 @@
 
 <!-- 11 -->
 <h2 id="s11"><span class="section-num">11</span>SD Card Transfer</h2>
-<p>Click <strong>⏏ TRANSFER</strong> to write the session to an SD card. A directory picker will open — navigate to the root of the SD card and confirm. CIdoru creates the following structure:</p>
+<p>Click <strong>⏏ TRANSFER</strong> to write the session to an SD card. A directory picker opens — navigate to the root of the SD card and confirm. A <strong>Transfer Progress</strong> window appears immediately and streams a live log of every operation.</p>
+
+<h3>What gets written</h3>
+<p>CIdoru creates and maintains the following structure on the SD card:</p>
 <pre>
 /lists/
+  session.json
   {SetlistName}/
-    {SetlistName}.txt     ← setlist configuration
+    {SetlistName}.txt     ← setlist config
+    setlist.json
     {SongName}/
-      {SongName}.txt      ← song configuration
-      {AudioFile}.wav     ← copied from your computer
-      {MidiFile}.mid      ← copied from your computer</pre>
+      {SongName}.txt      ← song config
+      song.json
+      fileMap.json
+      {AudioFile}.wav
+      {MidiFile}.mid
+/update/                  ← always present (for firmware)</pre>
 
-<h3>File copying</h3>
-<p>WAV and MIDI files are copied automatically — <strong>provided they were picked using the ↑ WAV / ↑ MID buttons in the current browser session</strong>. CIdoru holds the file in memory from the moment you pick it until the tab is closed.</p>
-<p>If a file was not picked in the current session (e.g. you loaded a saved session but did not re-pick the files), it will be skipped and a warning will list which files are missing. To fix it:</p>
-<ol>
-  <li>Navigate to the affected song.</li>
-  <li>Re-pick the missing file using <strong>↑ WAV</strong> or <strong>↑ MID</strong>.</li>
-  <li>Run Transfer again.</li>
-</ol>
+<h3>Delta transfer — what actually gets copied</h3>
+<p>CIdoru compares what is already on the SD card against the current session before writing anything. The rules are:</p>
+<ul>
+  <li><strong>Text and JSON files</strong> — written only if content has changed.</li>
+  <li><strong>WAV and MIDI files</strong> — compared by <em>file size</em>. If the size on the SD card matches the source file, the copy is skipped. If the sizes differ (e.g. a backing track was edited and re-exported under the same name), the file is overwritten. This means a renamed-but-identical file will not be unnecessarily re-copied, and an updated file with the same name will always be detected and replaced.</li>
+  <li><strong>Deleted playlists and songs</strong> — their folders are removed from the SD card automatically.</li>
+</ul>
 
-<div class="callout callout--warn">
-  <span class="callout-icon">⚠</span>
-  <span><strong>Browser limitation:</strong> the browser cannot access files on disk without the user explicitly selecting them. File references are not saved to local storage — only filenames are. Re-picking files is required once per session after loading.</span>
-</div>
+<h3>Pre-flight check</h3>
+<p>Before writing begins, CIdoru checks every required audio and MIDI file. If any file is absent from both the file cache and the SD card, the transfer is <strong>aborted</strong> and the progress log lists the missing files. Use <strong>⌕ SCAN</strong> and Relink/Pick to resolve them first, then run Transfer again.</p>
+<p>If a file is not in the cache but already exists on the SD card (e.g. it was picked in a previous session), CIdoru leaves it in place and notes it as "unverified" in the log. Size verification is not possible in this case because the source file is unknown. Relinking is recommended to enable full verification.</p>
+
+<h3>Transfer Progress window</h3>
+<p>The progress window shows a live scrolling log of every file operation. It stays open after completion so you can review the summary line at the bottom, which shows how many files were copied, skipped, or flagged with warnings. Close the window once you are done reviewing.</p>
+<p>Do not close the application while a transfer is in progress.</p>
+
 <div class="callout callout--note">
   <span class="callout-icon">ℹ</span>
-  <span>SD card transfer requires <strong>Chrome or Edge</strong>. The File System Access API is not available in Firefox or Safari.</span>
+  <span><strong>Desktop version:</strong> file paths are saved to <code>file-cache.json</code> alongside your session whenever you click Save. Once you pick a file, its path is remembered across app restarts. You only need to re-pick a file if it has been moved, renamed, or deleted.</span>
+</div>
+<div class="callout callout--warn">
+  <span class="callout-icon">⚠</span>
+  <span><strong>Web version:</strong> the browser cannot access files on disk without the user explicitly selecting them. File references are not saved between page loads — only filenames are. Re-picking via the ↑ WAV / ↑ MID buttons or the scan modal Pick buttons is required once per session. SD card transfer also requires <strong>Chrome or Edge</strong> — Firefox and Safari do not support the File System Access API.</span>
 </div>
 
 <!-- 12 -->
@@ -573,10 +588,37 @@
 
 <!-- 13 -->
 <h2 id="s13"><span class="section-num">13</span>File Scan &amp; Relink</h2>
-<p>Click <strong>⌕ SCAN</strong> to see all audio and MIDI file references in your session. Because CIdoru runs in a browser, it cannot verify whether files exist on disk — it only knows the filenames. If a file has moved or been renamed, click <strong>Relink</strong> next to it to point CIdoru to the new file.</p>
+<p>Click <strong>⌕ SCAN</strong> to check all audio and MIDI file references in your session. CIdoru also runs a silent scan automatically on startup and after loading a session — it only opens the scan modal automatically if there are confirmed missing files. Unverified files are noted in the info bar without interrupting your workflow.</p>
+
+<h3>How file paths are remembered (desktop version)</h3>
+<p>Every time you pick a WAV or MIDI file — either via the strip buttons, the song form, or Relink — CIdoru saves the full file path to a <code>file-cache.json</code> stored in your application data folder. This file is updated on every Save. When you restart the app, the paths are restored automatically, so files you have picked before do not need to be re-picked.</p>
+
+<h3>Scan results</h3>
+<p>Each file reference is reported in one of three states:</p>
+<ul>
+  <li><strong>Verified</strong> — the file is in the path cache and confirmed to exist on disk at the recorded path. Safe to transfer.</li>
+  <li><strong>Unverified</strong> — the filename is known but no cached path is available for this session. In the desktop version this can happen if the session was imported from elsewhere or the path cache was cleared. In the web version it is the normal state before picking files. Use <strong>Pick</strong> to confirm the path, or use <strong>⌕ Choose Folder</strong> to resolve multiple files at once.</li>
+  <li><strong>Missing</strong> — the file is confirmed absent from disk at the recorded path. The file may have been moved or renamed. Use <strong>Relink</strong> or <strong>⌕ Choose Folder</strong> to point CIdoru to the new location.</li>
+</ul>
+
+<h3>Relink and Pick — individual files</h3>
+<p>The scan modal shows a <strong>Relink</strong> button next to confirmed missing files, and a <strong>Pick</strong> button next to unverified ones. Both open a native file picker. Once you pick a file, the scan list updates immediately — you do not need to close and re-run the scan. Picked paths are saved to the file cache automatically.</p>
+
+<h3>Choose Folder — bulk relink</h3>
+<p>When there are multiple missing or unverified files, the <strong>⌕ Choose Folder</strong> button appears in the scan modal footer. Click it, navigate to any folder (such as the root of your audio files library), and CIdoru will recursively scan the entire folder tree for WAV and MIDI files. It then matches files to unresolved entries <em>by filename</em> — the first file found with a matching name is linked automatically. All matched paths are saved to the file cache immediately. Files that do not find a match remain in the list for manual relinking.</p>
+
+<div class="callout callout--note">
+  <span class="callout-icon">ℹ</span>
+  <span>If two files with the same name exist in different subfolders, the one found first during the recursive walk is used. If the wrong one was matched, use the individual <strong>Relink</strong> button to correct it.</span>
+</div>
+
 <div class="callout callout--tip">
   <span class="callout-icon">✓</span>
-  <span>Run a scan before transferring to SD card to confirm all slots have filenames assigned.</span>
+  <span>If you have updated a backing track file under the same name, relink it before transferring. CIdoru compares file sizes during transfer — a different-sized file with the same name will be detected and overwritten on the SD card.</span>
+</div>
+<div class="callout callout--tip">
+  <span class="callout-icon">✓</span>
+  <span>After resolving all flagged files, click Save to persist the updated file paths before running Transfer.</span>
 </div>
 
 <!-- 14 -->
@@ -695,13 +737,13 @@
 </table>
 
 <h3>Installation — Windows</h3>
-<p>Download <code>CIdoru-Setup-x.x.x.exe</code> from the CIdoru website. Run the installer. Windows will probably show an "Unknown Publisher" warning — click <strong>More info → Run anyway</strong>. This is expected behaviour for unsigned software; the original Idoru application behaves the same way.</p>
+<p>Download <code>CIdoru Setup x.x.x.exe</code> from the CIdoru website. Run the installer. Windows will show an "Unknown Publisher" warning — click <strong>More info → Run anyway</strong>. This is expected behaviour for unsigned software; the original Idoru application behaves the same way.</p>
 
 <h3>Installation — Linux</h3>
-<p>Download <code>CIdoru-Setup-x.x.x.AppImage</code>. Make it executable and run it:</p>
+<p>Download <code>CIdoru-x.x.x.AppImage</code>. Make it executable and run it:</p>
 <pre>
-chmod +x CIdoru-Setup-x.x.x.AppImage
-./CIdoru-Setup-x.x.x.AppImage</pre>
+chmod +x CIdoru-x.x.x.AppImage
+./CIdoru-x.x.x.AppImage</pre>
 <p>No installation required. Data is stored in <code>~/.config/cidoru/</code>.</p>
 
 <h3>File path persistence</h3>
@@ -724,6 +766,7 @@ chmod +x CIdoru-Setup-x.x.x.AppImage
 <p>Both themes support all functionality identically. The light theme is suited to bright environments such as daylit rehearsal spaces or outdoor stages.</p>
 
 <!-- 20 -->
-<h2 id="s20"><span class="section-num">20</span>Contact</h2>
-<p>CIdoru is developed and maintained by a semi-professional musician and professional software developer with over 30 years of experience in both fields, based in the Czech Republic.</p>
-<p>For bug reports, questions, or feedback: <a href="mailto:cidoru.app@gmail.com">cidoru.app@gmail.com</a></p>
+<h2 id="s20"><span class="section-num">20</span>Who am I / Contact</h2>
+<p>CIdoru is developed and maintained by an individual with over 30 years of experience in software engineering and music making, based in the Czech Republic.</p>
+ <p>Release notes, announcements and overall every single piece of information related to CIdoru can be found on <a href="https://dev.grinware.cz" target="_blank">https://dev.grinware.cz</a>.</p>
+<p>For bug reports, questions, or feedback: <a href="mailto:barney.estrada@bastardizer.cz">barney.estrada@bastardizer.cz

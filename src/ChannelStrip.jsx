@@ -2203,8 +2203,8 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
 //  WEB WELCOME MODAL — shown once on load in web mode only
 // ═══════════════════════════════════════════════════════════════════
 function WebWelcomeModal({ onClose }) {
-  const winUrl   = '/CIdoru-Setup-1.4.0.exe';
-  const linuxUrl = '/CIdoru-Setup-1.4.0.AppImage';
+  const winUrl   = '/CIdoru-Setup-1.8.0.exe';
+  const linuxUrl = '/CIdoru-Setup-1.8.0.AppImage';
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal--wide" onClick={e => e.stopPropagation()}>

@@ -14,7 +14,7 @@ const THEME_KEY   = 'cidoru-theme'
 
 // ── Environment detection ─────────────────────────────────────────
 export const isElectron = () =>
-  typeof window !== 'undefined' && !!window.electronAPI?.isElectron
+    typeof window !== 'undefined' && !!window.electronAPI?.isElectron
 
 // ── Theme persistence ─────────────────────────────────────────────
 export function getTheme () {
@@ -440,6 +440,43 @@ function _genSetlist (playlist, songs, mixerStates) {
 // ── WAV info (browser version, used by web-mode pickers) ─────────
 //  This is injected at runtime by ChannelStrip.jsx via setPlatformWavReader()
 let _readWavInfo = async () => null
+
+// ── Export / Import JSON ──────────────────────────────────────────
+export async function exportJson (data) {
+  const jsonStr = JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2)
+  if (isElectron()) {
+    return window.electronAPI.exportJson(jsonStr)
+  }
+  const blob = new Blob([jsonStr], { type: 'application/json' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url; a.download = `idoru-session-${Date.now()}.json`
+  a.click(); URL.revokeObjectURL(url)
+  return true
+}
+
+export async function importJson () {
+  if (isElectron()) {
+    const raw = await window.electronAPI.importJson()
+    if (!raw) return null
+    try { return JSON.parse(raw) } catch { return null }
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'; input.accept = '.json'
+    input.onchange = (e) => {
+      const file = e.target.files?.[0]
+      if (!file) { resolve(null); return }
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        try { resolve(JSON.parse(ev.target.result)) }
+        catch { resolve(null) }
+      }
+      reader.readAsText(file)
+    }
+    input.click()
+  })
+}
 
 export function setPlatformWavReader (fn) {
   _readWavInfo = fn

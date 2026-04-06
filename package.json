@@ -33,5 +33,35 @@
     "electron-builder":     "^25.1.0",
     "electron-vite":        "^2.3.0",
     "vite":                 "^5.4.0"
+  },
+  "build": {
+    "appId": "com.cidoru.app",
+    "productName": "CIdoru",
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "out/**"
+    ],
+    "extraResources": [
+      { "from": "public", "to": "public", "filter": ["MANUAL.html"] }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "CIdoru-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CIdoru"
+    },
+    "linux": {
+      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "artifactName": "CIdoru-Setup-${version}.AppImage",
+      "category": "Audio"
+    }
   }
 }

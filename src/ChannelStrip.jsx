@@ -300,12 +300,10 @@ export function defaultAudioSlots() {
 function emptyProject() { return { playlists: [], songs: [], mixerStates: {} }; }
 // Storage delegated to platform.js (localStorage in web, file in Electron)
 const readStorage  = () => platform.getInitialSession();
-const writeStorage = null; // unused — replaced by platform.saveSession
 
 // ── Presets — delegated to platform.js ───────────────────────────
 const PRESET_KEY   = "idoru-p1-presets"; // kept for reference only
 const readPresets  = () => platform.getInitialPresets();
-const writePresets = null; // unused — replaced by platform.savePresets
 
 // ═══════════════════════════════════════════════════════════════════
 //  dB MATH
@@ -1994,7 +1992,6 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
   // Apply preset (routing/levels only — not song metadata or files)
   const handleApplyPreset = (presetId) => {
     setSelectedPresetId(presetId);
-    if (!presetId) return;
     // Preset doesn't affect name/bpm/queue/midi/slots
     // Those are stored in mixerStates in the parent — parent will apply on save
   };
@@ -2829,7 +2826,8 @@ export function App() {
       />
       <div className="disclaimer-bar">
         THIS IS 3RD-PARTY SOFTWARE UNRELATED TO IDORU LIVE UG. IN CASE OF ANY ISSUES WITH THIS APPLICATION, DO NOT CONTACT IDORU LIVE UG TEAM — CONTACT&nbsp;
-        <a href="mailto:cidoru.app@gmail.com" className="disclaimer-link">cidoru.app@gmail.com</a>
+        <a href="mailto:barney.estrada@bastardizer.cz" className="disclaimer-link">barney.estrada@bastardizer.cz</a>.
+        FOR MORE INFO ABOUT CIDORU APP PLEASE VISIT <a href="https://dev.grinware.cz" target="_blank" className="disclaimer-link">DEV.GRINWARE.CZ</a>.
       </div>
 
       <div className="main-layout">

@@ -1,15 +1,16 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join, basename } from 'path'
 import {
-  readFileSync, writeFileSync, mkdirSync, existsSync,
+  readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, statSync,
   createWriteStream,
 } from 'fs'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 
 // ── Paths ─────────────────────────────────────────────────────────
-const userData    = () => app.getPath('userData')
-const sessionPath = () => join(userData(), 'session.json')
-const presetsPath = () => join(userData(), 'presets.json')
+const userData      = () => app.getPath('userData')
+const sessionPath   = () => join(userData(), 'session.json')
+const presetsPath   = () => join(userData(), 'presets.json')
+const fileCachePath = () => join(userData(), 'file-cache.json')
 
 // ── WAV header reader (Node.js Buffer version) ────────────────────
 function readWavInfoNode (buf) {
@@ -58,39 +59,97 @@ async function doTransfer (project, mixerStates, filePaths, sender) {
 
   const listsDir = join(root, 'lists')
   await mkdir(listsDir, { recursive: true })
-
-  // Ensure update/ folder always exists
   await mkdir(join(root, 'update'), { recursive: true })
 
-  const missing = []
-  const CRLF = '\r\n'
+  const missing  = []
+  const copied   = []
+  const skipped  = []
 
-  // ── Helper: write file only if content changed (delta) ──────────
+  // ── Helper: write text only if content changed ───────────────────
   async function writeIfChanged (filePath, content) {
     try {
       const existing = readFileSync(filePath, 'utf-8')
-      if (existing === content) return false // unchanged
-    } catch (_) {} // file doesn't exist yet
+      if (existing === content) return false
+    } catch (_) {}
     await writeFile(filePath, content, 'utf-8')
     return true
   }
 
-  async function writeIfChangedBytes (filePath, bytes) {
+  // ── Helper: copy binary file, compare by SIZE not content ────────
+  // Rationale: same-name backing tracks with edits will have different sizes.
+  // Reading full file content for comparison is too slow for multi-GB sessions.
+  async function copyIfSizeDiffers (srcPath, destPath, label) {
     try {
-      const existing = readFileSync(filePath)
-      if (existing.equals(bytes)) return false
-    } catch (_) {}
-    await writeFile(filePath, bytes)
-    return true
+      const srcStat  = statSync(srcPath)
+      try {
+        const destStat = statSync(destPath)
+        if (destStat.size === srcStat.size) {
+          skipped.push(label)
+          return false // same size — skip
+        }
+      } catch (_) {} // dest doesn't exist — will copy
+      const bytes = await readFile(srcPath)
+      await writeFile(destPath, bytes)
+      copied.push(label)
+      sender.send('transfer:progress', `  ✓ ${label}`)
+      return true
+    } catch (err) {
+      sender.send('transfer:progress', `  ✗ ${label} — ${err.message}`)
+      return false
+    }
   }
 
-  // ── session.json at lists/ root ──────────────────────────────────
-  const sessionUUID = project.sessionUUID || '00000000-0000-4000-8000-000000000000'
-  const sessionJson = JSON.stringify({ id: sessionUUID, filePath: '', name: project.name || 'CIdoru Session', deviceImport: false })
-  await writeIfChanged(join(listsDir, 'session.json'), sessionJson)
-  sender.send('transfer:progress', '✓ lists/session.json')
+  // ── Pre-flight: collect all required files and check what's missing
+  // A file is "ok" if srcPath exists on disk, or if it's already on the SD card
+  // with the correct size. Missing = srcPath absent AND not on SD card.
+  const preflight = []
+  for (const pl of project.playlists) {
+    const songs  = project.songs.filter(s => s.playlistId === pl.id)
+    const plName = sanitizeName(pl.name)
+    for (const song of songs) {
+      const sName   = sanitizeName(song.name)
+      const songDir = join(listsDir, plName, sName)
+      const slots   = song.audioSlots ?? []
+      for (let i = 0; i < slots.length; i++) {
+        const sl = slots[i]
+        if (!sl?.fileName) continue
+        const srcPath  = filePaths[`${song.id}_f${i}`]
+        const destPath = join(songDir, `${sl.fileName}.wav`)
+        const srcOk    = srcPath && existsSync(srcPath)
+        const destOk   = existsSync(destPath)
+        if (!srcOk && !destOk)
+          preflight.push(`${song.name} — F${i + 1}: ${sl.fileName}.wav`)
+        else if (!srcOk && destOk)
+          preflight.push(`${song.name} — F${i + 1}: ${sl.fileName}.wav (on SD but not verified — relink recommended)`)
+      }
+      if (song.midiFile) {
+        const srcPath  = filePaths[`${song.id}_midi`]
+        const destPath = join(songDir, `${song.midiFile}.mid`)
+        const srcOk    = srcPath && existsSync(srcPath)
+        const destOk   = existsSync(destPath)
+        if (!srcOk && !destOk)
+          preflight.push(`${song.name} — MIDI: ${song.midiFile}.mid`)
+      }
+    }
+  }
 
-  // ── Build set of expected playlist folders ────────────────────────
+  const hardMissing = preflight.filter(p => !p.includes('relink recommended'))
+  if (hardMissing.length > 0) {
+    sender.send('transfer:progress', `⛔ Transfer aborted — ${hardMissing.length} file(s) missing from both cache and SD card. Use Scan & Relink first.`)
+    return { missing: hardMissing, aborted: true }
+  }
+
+  // Warn about unverified files but continue
+  const unverified = preflight.filter(p => p.includes('relink recommended'))
+  if (unverified.length > 0) {
+    sender.send('transfer:progress', `⚠ ${unverified.length} file(s) not in cache — will use existing SD card copy (not size-verified). Relink recommended.`)
+  }
+
+  // ── session.json ─────────────────────────────────────────────────
+  const sessionUUID = project.sessionUUID || '00000000-0000-4000-8000-000000000000'
+  await writeIfChanged(join(listsDir, 'session.json'),
+    JSON.stringify({ id: sessionUUID, filePath: '', name: project.name || 'CIdoru Session', deviceImport: false }))
+
   const expectedPlFolders = new Set()
 
   for (const pl of project.playlists) {
@@ -100,17 +159,12 @@ async function doTransfer (project, mixerStates, filePaths, sender) {
     const plDir  = join(listsDir, plName)
     await mkdir(plDir, { recursive: true })
 
-    // setlist.json
-    const songUUIDs = songs.map(s => s.uuid || s.id)
-    const setlistJson = JSON.stringify({ id: pl.uuid || pl.id, songs: songUUIDs })
-    await writeIfChanged(join(plDir, 'setlist.json'), setlistJson)
+    await writeIfChanged(join(plDir, 'setlist.json'),
+      JSON.stringify({ id: pl.uuid || pl.id, songs: songs.map(s => s.uuid || s.id) }))
 
-    // Setlist .txt
-    const slTxt = generateSetlistFile(pl, songs, mixerStates)
-    const changed = await writeIfChanged(join(plDir, `${plName}.txt`), slTxt)
-    if (changed) sender.send('transfer:progress', `✓ ${plName}/${plName}.txt`)
+    const slTxtChanged = await writeIfChanged(join(plDir, `${plName}.txt`), generateSetlistFile(pl, songs, mixerStates))
+    if (slTxtChanged) sender.send('transfer:progress', `✓ ${plName}.txt`)
 
-    // Build set of expected song folders
     const expectedSongFolders = new Set()
 
     for (const song of songs) {
@@ -119,83 +173,73 @@ async function doTransfer (project, mixerStates, filePaths, sender) {
       const songDir = join(plDir, sName)
       await mkdir(songDir, { recursive: true })
 
-      // song.json
-      const songJson = JSON.stringify({ id: song.uuid || song.id })
-      await writeIfChanged(join(songDir, 'song.json'), songJson)
+      await writeIfChanged(join(songDir, 'song.json'),    JSON.stringify({ id: song.uuid || song.id }))
+      await writeIfChanged(join(songDir, 'fileMap.json'), JSON.stringify(generateFileMap(song)))
 
-      // fileMap.json
-      const fileMap = generateFileMap(song)
-      await writeIfChanged(join(songDir, 'fileMap.json'), JSON.stringify(fileMap))
-
-      // Song .txt
-      const sTxt = generateSongFile(song, mixerStates[song.id])
-      const sTxtChanged = await writeIfChanged(join(songDir, `${sName}.txt`), sTxt)
-      if (sTxtChanged) sender.send('transfer:progress', `  ✓ ${plName}/${sName}/${sName}.txt`)
+      const sTxtChanged = await writeIfChanged(join(songDir, `${sName}.txt`), generateSongFile(song, mixerStates[song.id]))
+      if (sTxtChanged) sender.send('transfer:progress', `  ✓ ${sName}.txt`)
 
       // WAV files
       const slots = song.audioSlots ?? []
       for (let i = 0; i < slots.length; i++) {
         const sl = slots[i]
         if (!sl?.fileName) continue
-        const srcPath = filePaths[`${song.id}_f${i}`]
+        const srcPath  = filePaths[`${song.id}_f${i}`]
         const destPath = join(songDir, `${sl.fileName}.wav`)
         if (srcPath && existsSync(srcPath)) {
-          const bytes = await readFile(srcPath)
-          const copied = await writeIfChangedBytes(destPath, bytes)
-          if (copied) sender.send('transfer:progress', `  ✓ ${sl.fileName}.wav`)
+          await copyIfSizeDiffers(srcPath, destPath, `${sl.fileName}.wav`)
         } else if (!existsSync(destPath)) {
           missing.push(`${song.name} — F${i + 1}: ${sl.fileName}.wav`)
-          sender.send('transfer:progress', `  ⚠ ${sl.fileName}.wav — not found`)
+          sender.send('transfer:progress', `  ⚠ ${sl.fileName}.wav — missing`)
         }
+        // else: not in cache but exists on SD — leave as-is (warned in preflight)
       }
 
-      // MIDI file
+      // MIDI
       if (song.midiFile) {
         const srcPath  = filePaths[`${song.id}_midi`]
         const destPath = join(songDir, `${song.midiFile}.mid`)
         if (srcPath && existsSync(srcPath)) {
-          const bytes = await readFile(srcPath)
-          const copied = await writeIfChangedBytes(destPath, bytes)
-          if (copied) sender.send('transfer:progress', `  ✓ ${song.midiFile}.mid`)
+          await copyIfSizeDiffers(srcPath, destPath, `${song.midiFile}.mid`)
         } else if (!existsSync(destPath)) {
           missing.push(`${song.name} — MIDI: ${song.midiFile}.mid`)
-          sender.send('transfer:progress', `  ⚠ ${song.midiFile}.mid — not found`)
+          sender.send('transfer:progress', `  ⚠ ${song.midiFile}.mid — missing`)
         }
       }
     }
 
-    // ── Delete song folders no longer in session ─────────────────
-    const { readdirSync } = await import('fs')
+    // Delete removed song folders
     try {
-      const existingSongFolders = readdirSync(plDir, { withFileTypes: true })
-        .filter(d => d.isDirectory())
-        .map(d => d.name)
-      for (const folder of existingSongFolders) {
+        const existing = readdirSync(plDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name)
+      for (const folder of existing) {
         if (!expectedSongFolders.has(folder)) {
           const { rm } = await import('fs/promises')
           await rm(join(plDir, folder), { recursive: true, force: true })
-          sender.send('transfer:progress', `  🗑 deleted song folder: ${folder}`)
+          sender.send('transfer:progress', `  🗑 deleted: ${folder}`)
         }
       }
     } catch (_) {}
   }
 
-  // ── Delete playlist folders no longer in session ──────────────
-  const { readdirSync } = await import('fs')
+  // Delete removed playlist folders
   try {
-    const existingPlFolders = readdirSync(listsDir, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => d.name)
-    for (const folder of existingPlFolders) {
+    const existing = readdirSync(listsDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name)
+    for (const folder of existing) {
       if (!expectedPlFolders.has(folder)) {
         const { rm } = await import('fs/promises')
         await rm(join(listsDir, folder), { recursive: true, force: true })
-        sender.send('transfer:progress', `🗑 deleted playlist folder: ${folder}`)
+        sender.send('transfer:progress', `🗑 deleted playlist: ${folder}`)
       }
     }
   } catch (_) {}
 
-  return missing
+  sender.send('transfer:progress', `\n── Summary ──────────────────────────────`)
+  sender.send('transfer:progress', `  ✓ copied: ${copied.length} file(s)`)
+  sender.send('transfer:progress', `  – skipped (unchanged): ${skipped.length} file(s)`)
+  if (missing.length) sender.send('transfer:progress', `  ⚠ missing: ${missing.length} file(s)`)
+  if (unverified.length) sender.send('transfer:progress', `  ⚠ unverified on SD: ${unverified.length} file(s)`)
+
+  return { missing, copied: copied.length, skipped: skipped.length, aborted: false }
 }
 
 // ── File generators (Node.js versions — duplicated from renderer) ──
@@ -337,6 +381,48 @@ ipcMain.handle('session:load', async () => {
   } catch { return null }
 })
 
+// File path cache — persisted so Electron remembers paths between launches
+ipcMain.handle('filecache:save', async (_, cacheObj) => {
+  try { writeFileSync(fileCachePath(), JSON.stringify(cacheObj), 'utf-8'); return true }
+  catch { return false }
+})
+
+ipcMain.handle('filecache:load', async () => {
+  try { return JSON.parse(readFileSync(fileCachePath(), 'utf-8')) }
+  catch { return null }
+})
+
+// Recursive folder scan — returns { nameNoExt: absolutePath } for all WAV/MIDI found
+ipcMain.handle('scan:folder', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title:      'Select folder to scan for audio files',
+    buttonLabel:'Scan this folder',
+    properties: ['openDirectory'],
+  })
+  if (canceled || !filePaths[0]) return null
+
+  const result = {}
+
+  function walk (dir) {
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(full)
+      } else if (entry.isFile()) {
+        if (/\.(wav|mid|midi)$/i.test(entry.name)) {
+          const nameNoExt = entry.name.replace(/\.(wav|mid|midi)$/i, '')
+          if (!result[nameNoExt]) result[nameNoExt] = full
+        }
+      }
+    }
+  }
+
+  walk(filePaths[0])
+  return result
+})
+
 // Presets
 ipcMain.handle('presets:save', async (_, data) => {
   try {
@@ -421,10 +507,10 @@ ipcMain.handle('scan:verify', async (_, filePaths) => {
 // Transfer
 ipcMain.handle('transfer:start', async (event, project, mixerStates, filePaths) => {
   try {
-    const missing = await doTransfer(project, mixerStates, filePaths, event.sender)
-    return { ok: true, missing }
+    const result = await doTransfer(project, mixerStates, filePaths, event.sender)
+    return { ok: !result.aborted, ...result }
   } catch (err) {
-    return { ok: false, error: err.message, missing: [] }
+    return { ok: false, error: err.message, missing: [], aborted: false }
   }
 })
 

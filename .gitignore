@@ -23,6 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 /Cidoru.iml
-/release/CIdoru-Setup-1.6.0.AppImage
-/out/renderer/index.html
-/out/renderer/assets/index-C34BxJfL.js
+/release/*
+/out/*

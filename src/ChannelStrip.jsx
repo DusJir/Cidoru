@@ -300,12 +300,10 @@ export function defaultAudioSlots() {
 function emptyProject() { return { playlists: [], songs: [], mixerStates: {} }; }
 // Storage delegated to platform.js (localStorage in web, file in Electron)
 const readStorage  = () => platform.getInitialSession();
-const writeStorage = null; // unused — replaced by platform.saveSession
 
 // ── Presets — delegated to platform.js ───────────────────────────
 const PRESET_KEY   = "idoru-p1-presets"; // kept for reference only
 const readPresets  = () => platform.getInitialPresets();
-const writePresets = null; // unused — replaced by platform.savePresets
 
 // ═══════════════════════════════════════════════════════════════════
 //  dB MATH
@@ -1555,7 +1553,58 @@ function SavePresetModal({ onSave, onCancel }) {
 // ═══════════════════════════════════════════════════════════════════
 //  SCAN MODAL  — shows missing files with Relink option
 // ═══════════════════════════════════════════════════════════════════
-function ScanModal({ results, onRelink, onClose }) {
+// ═══════════════════════════════════════════════════════════════════
+//  TRANSFER MODAL — progress log + result
+// ═══════════════════════════════════════════════════════════════════
+function TransferModal({ lines, done, result, onClose }) {
+  const logRef = useRef(null);
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [lines]);
+
+  const hasErrors  = result?.missing?.length > 0 || result?.aborted;
+  const statusIcon = !done ? "⏳" : hasErrors ? "⚠" : "✓";
+  const statusText = !done
+    ? "Transferring…"
+    : result?.aborted
+      ? `Aborted — ${result.missing?.length ?? 0} file(s) missing. Use Scan & Relink first.`
+      : result?.missing?.length > 0
+        ? `Done with warnings — ${result.missing.length} file(s) not copied.`
+        : `Transfer complete. ${result?.copied ?? 0} file(s) copied, ${result?.skipped ?? 0} unchanged.`;
+
+  return (
+    <div className="modal-overlay" onClick={done ? onClose : undefined}>
+      <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <span>SD Card Transfer</span>
+          {done && <button className="modal-close" onClick={onClose}>✕</button>}
+        </div>
+        <div className="modal-body">
+          <div className={`transfer-status${!done ? " transfer-status--busy" : hasErrors ? " transfer-status--warn" : " transfer-status--ok"}`}>
+            <span className="transfer-status-icon">{statusIcon}</span>
+            <span>{statusText}</span>
+          </div>
+          <div className="transfer-log" ref={logRef}>
+            {lines.map((line, i) => (
+              <div key={i} className={`transfer-log-line${line.startsWith("  ⚠") || line.startsWith("⛔") ? " transfer-log-line--warn" : line.startsWith("  ✓") || line.startsWith("✓") ? " transfer-log-line--ok" : line.startsWith("🗑") || line.startsWith("  🗑") ? " transfer-log-line--del" : ""}`}>
+                {line}
+              </div>
+            ))}
+            {!done && <div className="transfer-log-cursor">▌</div>}
+          </div>
+        </div>
+        <div className="modal-footer">
+          {done
+            ? <button className="modal-btn modal-btn--primary" onClick={onClose}>Close</button>
+            : <span className="transfer-wait-note">Please wait — do not close the application.</span>
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScanModal({ results, onRelink, onScanFolder, onClose }) {
   const missing    = results.filter(r => r.missing);
   const unverified = results.filter(r => r.unverified && !r.missing);
   const ok         = results.filter(r => !r.missing && !r.unverified);
@@ -1622,6 +1671,12 @@ function ScanModal({ results, onRelink, onClose }) {
           )}
         </div>
         <div className="modal-footer">
+          {onScanFolder && (missing.length > 0 || unverified.length > 0) && (
+            <button className="modal-btn" onClick={onScanFolder}
+              title="Recursively scan a folder and auto-link files by filename">
+              ⌕ Choose Folder
+            </button>
+          )}
           <button className="modal-btn modal-btn--primary" onClick={onClose}>Close</button>
         </div>
       </div>
@@ -1937,7 +1992,6 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
   // Apply preset (routing/levels only — not song metadata or files)
   const handleApplyPreset = (presetId) => {
     setSelectedPresetId(presetId);
-    if (!presetId) return;
     // Preset doesn't affect name/bpm/queue/midi/slots
     // Those are stored in mixerStates in the parent — parent will apply on save
   };
@@ -2149,8 +2203,8 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
 //  WEB WELCOME MODAL — shown once on load in web mode only
 // ═══════════════════════════════════════════════════════════════════
 function WebWelcomeModal({ onClose }) {
-  const winUrl   = '/CIdoru-Setup-1.6.0.exe';
-  const linuxUrl = '/CIdoru-Setup-1.6.0.AppImage';
+  const winUrl   = '/CIdoru-Setup-1.4.0.exe';
+  const linuxUrl = '/CIdoru-Setup-1.4.0.AppImage';
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
@@ -2178,15 +2232,6 @@ function WebWelcomeModal({ onClose }) {
             Application</strong>. The installer is not code-signed — Windows will display an
             "Unknown Publisher" warning. Simply click <em>More info → Run anyway</em> to proceed,
             exactly as you would with the original Idoru software.
-          </p>
-          <p className="welcome-body">
-            From the version 1.6.0 onwards, all announcements about new versions, release notes etc.
-            will be posted via www.grinware.cz domain. In case of any issues please check that site first. Thank you.
-            <div className="welcome-download-row">
-              <a href="https://dev.grinware.cz" target="_blank" className="modal-btn welcome-dl-btn">
-                ► dev.grinware.cz
-              </a>
-            </div>
           </p>
           <div className="welcome-download-row">
             <a href={winUrl} download className="modal-btn modal-btn--primary welcome-dl-btn">
@@ -2244,6 +2289,24 @@ export function App() {
     platform.saveTheme(theme);
   }, [theme]);
 
+  // Auto-scan on startup if session has file references
+  // Use a ref so we can call handleScan after it's defined without circular dep
+  const handleScanRef = useRef(null);
+  useEffect(() => {
+    const hasFiles = project.songs?.some(s =>
+      s.audioSlots?.some(sl => sl?.fileName) || s.midiFile
+    );
+    if (!hasFiles) return;
+    // Wait for loadFileCache to populate, then do a silent background scan.
+    // Only open the scan modal if there are confirmed missing files (not just unverified).
+    const t = setTimeout(async () => {
+      if (!handleScanRef.current) return;
+      await handleScanRef.current({ silent: true });
+    }, 800);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // only on mount
+
   const handleToggleTheme = useCallback(() => {
     setTheme(t => t === 'dark' ? 'light' : 'dark');
   }, []);
@@ -2256,13 +2319,19 @@ export function App() {
   const [scanModal,     setScanModal]    = useState(null);   // null | results[]
   const [confirmModal,  setConfirmModal] = useState(null);   // null | { title, message, onConfirm }
   const [firmwareModal, setFirmwareModal] = useState(false);
+  const [transferModal, setTransferModal] = useState(null); // null | { lines, done, result }
   // Web-only welcome modal — shown once per session, never in Electron
   const [welcomeModal,  setWelcomeModal] = useState(() => !window.electronAPI?.isElectron);
 
   const infoTimer  = useRef(null);
-  // File cache: Map<cacheKey, File>  — persists for the session, lost on reload.
+  // File cache: Map<cacheKey, File|path> — persisted to disk in Electron, lost on reload in web.
   // Keys: `${songId}_f${slotIdx}` for WAV slots, `${songId}_midi` for MIDI.
   const fileCache  = useRef(new Map());
+
+  // Restore file paths from disk on startup (Electron only — no-op in web)
+  useEffect(() => {
+    platform.loadFileCache(fileCache.current);
+  }, []);
   const showInfo = useCallback((text, type = "info") => {
     clearTimeout(infoTimer.current);
     setInfoMsg({ text, type });
@@ -2275,8 +2344,13 @@ export function App() {
   // ── Save ─────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     const ok = await platform.saveSession({ playlists: project.playlists, songs: project.songs, mixerStates });
-    if (ok) { setDirtyIds(new Set()); showInfo("Saved.", "success"); }
-    else    { showInfo("Save failed — storage may be full.", "error"); }
+    if (ok) {
+      setDirtyIds(new Set());
+      platform.saveFileCache(fileCache.current); // persist file paths (no-op in web)
+      showInfo("Saved.", "success");
+    } else {
+      showInfo("Save failed — storage may be full.", "error");
+    }
   }, [project, mixerStates, showInfo]);
 
   // ── Load ─────────────────────────────────────────────────────────
@@ -2285,7 +2359,8 @@ export function App() {
     if (!data) { showInfo("Nothing saved yet.", "info"); return; }
     setProject(data); setMixerStates(data.mixerStates || {}); setDirtyIds(new Set());
     setSelectedPlId(null); setSongId(null);
-    showInfo("Session loaded.", "success");
+    showInfo("Session loaded. Running file scan…", "success");
+    setTimeout(() => handleScanRef.current?.({ silent: true }), 300);
   }, [showInfo]);
 
   // ── New Session ───────────────────────────────────────────────────
@@ -2350,7 +2425,8 @@ export function App() {
   }, [selectedSongId, mixerStates, showInfo]);
 
   // ── Scan ─────────────────────────────────────────────────────────
-  const handleScan = useCallback(async () => {
+  // silent: true = only open modal if confirmed missing (not just unverified)
+  const handleScan = useCallback(async ({ silent = false } = {}) => {
     const results = [];
     for (const song of project.songs) {
       const slots = song.audioSlots ?? [];
@@ -2364,30 +2440,64 @@ export function App() {
     }
     const verified = await platform.scanVerify(fileCache.current);
     if (verified) {
-      // verified is a map of key → boolean — only keys IN the map were checked
       results.forEach(r => {
         const key = r.slotIdx >= 0 ? `${r.songId}_f${r.slotIdx}` : `${r.songId}_midi`;
         if (key in verified) {
           r.missing = !verified[key];
         } else {
-          // Key not in cache at all — file was never picked in this session
           r.unverified = true;
         }
       });
     } else {
-      // No cache at all (web, or Electron with no files picked)
       results.forEach(r => { r.unverified = true; });
     }
-    setScanModal(results.length > 0 ? results : []);
     const missingCount    = results.filter(r => r.missing).length;
     const unverifiedCount = results.filter(r => r.unverified).length;
+
+    // In silent mode, only open modal if there are confirmed missing files
+    if (!silent || missingCount > 0) {
+      setScanModal(results.length > 0 ? results : []);
+    }
+
     if (missingCount > 0)
-      showInfo(`Scan complete. ${missingCount} file(s) confirmed missing — relink required.`, "error");
-    else if (unverifiedCount > 0)
-      showInfo(`Scan complete. ${unverifiedCount} file(s) not yet picked in this session — open each song and pick files before transferring.`, "error");
-    else
+      showInfo(`Scan: ${missingCount} file(s) confirmed missing — use Scan to relink.`, "error");
+    else if (unverifiedCount > 0 && !silent)
+      showInfo(`Scan: ${unverifiedCount} file(s) not in cache — use ↑ WAV or Scan → Choose Folder.`, "error");
+    else if (!silent)
       showInfo(`Scan complete. All ${results.length} file(s) verified on disk.`, "success");
   }, [project.songs, showInfo]);
+  // Keep ref in sync so startup auto-scan can call this after it's defined
+  handleScanRef.current = handleScan;
+
+  // ── Scan folder — bulk relink by filename ─────────────────────────
+  const handleScanFolder = useCallback(async () => {
+    const folderMap = await platform.scanFolder();
+    if (!folderMap) return; // user cancelled
+
+    let matched = 0;
+    setScanModal(prev => {
+      if (!prev) return prev;
+      return prev.map(r => {
+        if (!r.missing && !r.unverified) return r; // already ok
+        const nameNoExt = r.fileName;
+        if (folderMap[nameNoExt]) {
+          const cacheKey = r.slotIdx >= 0
+            ? `${r.songId}_f${r.slotIdx}`
+            : `${r.songId}_midi`;
+          fileCache.current.set(cacheKey, folderMap[nameNoExt]);
+          matched++;
+          return { ...r, missing: false, unverified: false };
+        }
+        return r;
+      });
+    });
+
+    // Persist the newly found paths
+    platform.saveFileCache(fileCache.current);
+
+    if (matched > 0) showInfo(`Folder scan: ${matched} file(s) matched and linked.`, "success");
+    else showInfo(`Folder scan complete — no matches found for remaining files.`, "info");
+  }, [showInfo]);
 
   const handleRelink = useCallback(async (scanEntry) => {
     const isMidi = scanEntry.slotIdx < 0;
@@ -2429,23 +2539,24 @@ export function App() {
 
   // ── Transfer ─────────────────────────────────────────────────────
   const handleTransfer = useCallback(async () => {
-    showInfo("Opening SD card — select the root of the card…", "info");
+    // Open modal in busy state immediately
+    setTransferModal({ lines: ["Waiting for folder selection…"], done: false, result: null });
+
+    const appendLine = (line) => {
+      setTransferModal(prev => prev ? { ...prev, lines: [...prev.lines, line] } : prev);
+    };
+
     try {
-      const lines   = [];
-      const missing = await platform.transfer(
+      const result = await platform.transfer(
         project, mixerStates, fileCache.current,
-        (msg) => { lines.push(msg); showInfo(msg, "info"); }
+        (msg) => appendLine(msg)
       );
-      if (missing.length > 0) {
-        showInfo(
-          `Transfer done with ${missing.length} missing file(s): ${missing.slice(0, 3).join("; ")}${missing.length > 3 ? "…" : ""}. Re-pick files and transfer again.`,
-          "error"
-        );
-      } else {
-        showInfo(`Transfer complete. ${lines.length} file(s) written.`, "success");
-      }
-    } catch (err) { showInfo(`Transfer failed: ${err.message}`, "error"); }
-  }, [project, mixerStates, showInfo]);
+      setTransferModal(prev => prev ? { ...prev, done: true, result } : prev);
+    } catch (err) {
+      appendLine(`⛔ ${err.message}`);
+      setTransferModal(prev => prev ? { ...prev, done: true, result: { missing: [], aborted: false, copied: 0, skipped: 0, error: err.message } } : prev);
+    }
+  }, [project, mixerStates]);
 
   // ── Mixer state from scene ────────────────────────────────────────
   const handleMixerStateChange = useCallback((state) => {
@@ -2715,7 +2826,8 @@ export function App() {
       />
       <div className="disclaimer-bar">
         THIS IS 3RD-PARTY SOFTWARE UNRELATED TO IDORU LIVE UG. IN CASE OF ANY ISSUES WITH THIS APPLICATION, DO NOT CONTACT IDORU LIVE UG TEAM — CONTACT&nbsp;
-        <a href="mailto:cidoru.app@gmail.com" className="disclaimer-link">cidoru.app@gmail.com</a>
+        <a href="mailto:barney.estrada@bastardizer.cz" className="disclaimer-link">barney.estrada@bastardizer.cz</a>.
+        FOR MORE INFO ABOUT CIDORU APP PLEASE VISIT <a href="https://dev.grinware.cz" target="_blank" className="disclaimer-link">DEV.GRINWARE.CZ</a>.
       </div>
 
       <div className="main-layout">
@@ -2753,7 +2865,7 @@ export function App() {
               onStateChange={handleMixerStateChange}
               audioSlots={selectedSong?.audioSlots ?? null}
               onSlotUpdate={selectedSongId ? handleSlotUpdate : null}
-              kbDisabled={!!(playlistForm || songForm || presetForm || scanModal || confirmModal || firmwareModal)}
+              kbDisabled={!!(playlistForm || songForm || presetForm || scanModal || confirmModal || firmwareModal || transferModal)}
             />
           )}
 
@@ -2784,8 +2896,9 @@ export function App() {
           onCancel={() => setSongForm(null)}
         />
       )}
+      {transferModal  && <TransferModal lines={transferModal.lines} done={transferModal.done} result={transferModal.result} onClose={() => setTransferModal(null)} />}
       {presetForm     && <SavePresetModal onSave={handleConfirmPreset} onCancel={() => setPresetForm(false)} />}
-      {scanModal      && <ScanModal results={scanModal} onRelink={handleRelink} onClose={() => setScanModal(null)} />}
+      {scanModal      && <ScanModal results={scanModal} onRelink={handleRelink} onScanFolder={handleScanFolder} onClose={() => setScanModal(null)} />}
       {firmwareModal  && <FirmwareModal onClose={() => setFirmwareModal(false)} />}
       {welcomeModal   && <WebWelcomeModal onClose={() => setWelcomeModal(false)} />}
       {confirmModal   && (

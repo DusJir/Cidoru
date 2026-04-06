@@ -986,3 +986,89 @@ body { background: #07080d; }
 }
 [data-theme="light"] .welcome-lead { color: #2a4a6a; }
 [data-theme="light"] .welcome-sig  { color: #7a90a8; }
+
+/* ── Transfer Modal ──────────────────────────────────────────────── */
+.transfer-status {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 4px; margin-bottom: 12px;
+  font-size: 13px; border: 1px solid var(--modal-bd);
+  background: var(--surface, #13151a);
+}
+.transfer-status--busy { border-color: var(--cs-btn-bd, #2a3040); }
+.transfer-status--ok   { border-color: #1a6a30; background: #0d2a18; color: #39d353; }
+.transfer-status--warn { border-color: #6a4a10; background: #2a1e08; color: #d4a020; }
+.transfer-status-icon  { font-size: 16px; flex-shrink: 0; }
+
+.transfer-log {
+  height: 300px; overflow-y: auto;
+  background: #07080d; border: 1px solid var(--modal-bd, #1e2128);
+  border-radius: 4px; padding: 10px 12px;
+  font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.7;
+}
+.transfer-log-line       { color: #6a7a8a; }
+.transfer-log-line--ok   { color: #39d353; }
+.transfer-log-line--warn { color: #d4a020; }
+.transfer-log-line--del  { color: #d04040; }
+.transfer-log-cursor {
+  display: inline-block; color: #39d353;
+  animation: xfer-blink 1s step-end infinite;
+}
+@keyframes xfer-blink { 0%,100%{opacity:1} 50%{opacity:0} }
+.transfer-wait-note { font-size: 12px; color: var(--muted-text, #6a7a8a); font-style: italic; }
+
+[data-theme="light"] .transfer-status--ok   { background: #d8f0e0; color: #1a6a30; }
+[data-theme="light"] .transfer-status--warn { background: #f8ead8; color: #8a5010; }
+[data-theme="light"] .transfer-log { background: #f4f6fa; }
+[data-theme="light"] .transfer-log-line       { color: #5a6a7a; }
+[data-theme="light"] .transfer-log-line--ok   { color: #1a6a30; }
+[data-theme="light"] .transfer-log-line--warn { color: #8a5010; }
+[data-theme="light"] .transfer-log-line--del  { color: #a02020; }
+
+/* ── Transfer Modal ──────────────────────────────────────────────── */
+.transfer-status {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 4px; margin-bottom: 14px;
+  font-size: 13px; line-height: 1.5;
+  border: 1px solid var(--cs-btn-bd);
+  background: var(--modal-section-bg, #0d0f14);
+}
+.transfer-status--ok   { border-color: #1a6a30; background: #0a1e10; color: #39d353; }
+.transfer-status--warn { border-color: #6a4a10; background: #1e1508; color: #d4a020; }
+.transfer-status-icon  { font-size: 16px; flex-shrink: 0; }
+
+.transfer-log {
+  height: 300px; overflow-y: auto;
+  background: #05060a;
+  border: 1px solid var(--modal-bd, #1e2530);
+  border-radius: 4px;
+  padding: 10px 14px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px; line-height: 1.75;
+}
+.transfer-log::-webkit-scrollbar { width: 6px; }
+.transfer-log::-webkit-scrollbar-track { background: transparent; }
+.transfer-log::-webkit-scrollbar-thumb { background: var(--modal-bd, #1e2530); border-radius: 3px; }
+
+.transfer-log-line       { color: #4a5a6a; white-space: pre-wrap; }
+.transfer-log-line--ok   { color: #39d353; }
+.transfer-log-line--warn { color: #d4a020; }
+.transfer-log-line--del  { color: #c04040; }
+
+.transfer-log-cursor {
+  display: inline-block;
+  color: #39d353;
+  animation: transfer-blink 1s step-end infinite;
+}
+@keyframes transfer-blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+.transfer-wait-note {
+  font-size: 12px;
+  color: #4a5a6a;
+  font-style: italic;
+}
+
+[data-theme="light"] .transfer-log { background: #f0f4f8; border-color: #c0ccd8; }
+[data-theme="light"] .transfer-log-line { color: #7a8a9a; }
+[data-theme="light"] .transfer-status { background: #f0f4f8; }
+[data-theme="light"] .transfer-status--ok   { background: #e8f8ee; color: #1a6a30; }
+[data-theme="light"] .transfer-status--warn { background: #faf0e0; color: #8a5a10; }

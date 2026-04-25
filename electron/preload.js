@@ -90,9 +90,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Export / Import JSON
   exportJson: (jsonStr) => ipcRenderer.invoke('export:json', jsonStr),
   importJson: ()        => ipcRenderer.invoke('import:json'),
+  importIdoru:()        => ipcRenderer.invoke('import:idoru'),
+
+  // Audio preview — read file bytes for Web Audio API
+  audio: {
+    readBuffer: (filePath) => ipcRenderer.invoke('audio:readBuffer', filePath),
+  },
 
   // Open manual
   openManual: ()        => ipcRenderer.invoke('open:manual'),
+
+  // Auto-updater
+  updater: {
+    install: () => ipcRenderer.invoke('updater:install'),
+    onUpdateAvailable: (cb) => {
+      const h = (_, info) => cb(info)
+      ipcRenderer.on('updater:update-available', h)
+      return () => ipcRenderer.removeListener('updater:update-available', h)
+    },
+    onDownloadProgress: (cb) => {
+      const h = (_, pct) => cb(pct)
+      ipcRenderer.on('updater:download-progress', h)
+      return () => ipcRenderer.removeListener('updater:download-progress', h)
+    },
+    onUpdateDownloaded: (cb) => {
+      const h = (_, info) => cb(info)
+      ipcRenderer.on('updater:update-downloaded', h)
+      return () => ipcRenderer.removeListener('updater:update-downloaded', h)
+    },
+  },
 
   // Firmware
   firmware: {

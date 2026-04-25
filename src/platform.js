@@ -478,6 +478,26 @@ export async function importJson () {
   })
 }
 
+// Import from original .idoru format — returns raw JSON string for ChannelStrip to parse
+export async function importIdoru () {
+  if (isElectron()) {
+    return window.electronAPI.importIdoru()   // returns raw string or null
+  }
+  // Web: file picker for .idoru
+  return new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'; input.accept = '.idoru'
+    input.onchange = (e) => {
+      const file = e.target.files?.[0]
+      if (!file) { resolve(null); return }
+      const reader = new FileReader()
+      reader.onload = (ev) => resolve(ev.target.result)
+      reader.readAsText(file)
+    }
+    input.click()
+  })
+}
+
 export function setPlatformWavReader (fn) {
   _readWavInfo = fn
 }

@@ -1,8 +1,11 @@
-const { defineConfig } = require('electron-vite')
-const react = require('@vitejs/plugin-react')
-const { resolve } = require('path')
+import { defineConfig } from 'electron-vite'
+import react from '@vitejs/plugin-react'
+import { resolve } from 'path'
+import { fileURLToPath } from 'url'
 
-module.exports = defineConfig({
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+
+export default defineConfig({
   main: {
     build: {
       lib: {

@@ -843,7 +843,7 @@ body { background: #07080d; }
 /* ═══════════════════════════════════════════════════════════════════
    IDORU SCENE
    ═══════════════════════════════════════════════════════════════════ */
-.idoru-scene { display: flex; flex-direction: column; align-items: flex-start; }
+.idoru-scene { display: flex; flex-direction: column; align-items: stretch; }
 
 .scene-status-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -1060,6 +1060,7 @@ body { background: #07080d; }
   animation: transfer-blink 1s step-end infinite;
 }
 @keyframes transfer-blink { 0%,100%{opacity:1} 50%{opacity:0} }
+@keyframes at-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .transfer-wait-note {
   font-size: 12px;
@@ -1072,3 +1073,123 @@ body { background: #07080d; }
 [data-theme="light"] .transfer-status { background: #f0f4f8; }
 [data-theme="light"] .transfer-status--ok   { background: #e8f8ee; color: #1a6a30; }
 [data-theme="light"] .transfer-status--warn { background: #faf0e0; color: #8a5a10; }
+
+/* ── Update Banner ───────────────────────────────────────────────── */
+.update-bar {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 6px 16px; font-size: 12px; font-family: monospace;
+  letter-spacing: 0.05em; text-transform: uppercase; flex-shrink: 0;
+}
+.update-bar--available  { background: #1a2a1a; color: #4a9a4a; border-bottom: 1px solid #2a4a2a; }
+.update-bar--downloading{ background: #1a1a2a; color: #4a6abf; border-bottom: 1px solid #2a2a4a; }
+.update-bar--ready      { background: #1a2a1a; color: #39d353; border-bottom: 1px solid #2a5a2a; }
+.update-bar-btn {
+  font-family: monospace; font-size: 11px; letter-spacing: 0.06em;
+  padding: 3px 10px; background: #2a5a2a; border: 1px solid #39d353;
+  color: #39d353; border-radius: 3px; cursor: pointer;
+  transition: background 0.15s;
+}
+.update-bar-btn:hover { background: #3a6a3a; }
+
+/* ── Audio Transport ─────────────────────────────────────────────── */
+/* ── Audio Transport ─────────────────────────────────────────────── */
+/* Matches routing-tree: same margin, border-radius, border style     */
+.audio-transport {
+  width: calc(100% - 32px);
+  margin: 0 16px 8px;           /* 8px gap before routing map */
+  background: var(--rt-bg, #0a1018);
+  border: 1px solid var(--rt-bd, #141e28);
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+  user-select: none; flex-shrink: 0; box-sizing: border-box;
+}
+.audio-transport--disabled { opacity: 0.38; pointer-events: none; }
+.audio-transport-err {
+  font-size: 11px; color: #d4a020; font-family: monospace;
+  letter-spacing: 0.04em;
+}
+.audio-transport-msg {
+  color: #4a7abf;
+}
+
+/* Row 1: progress bar — always full width of the block */
+.at-progress-wrap {
+  position: relative;
+  width: 100%; box-sizing: border-box;
+  padding-bottom: 18px;         /* room for time labels below track */
+  cursor: pointer;
+}
+.at-progress-track {
+  position: relative; height: 6px; background: #1e2530;
+  border-radius: 3px; overflow: visible;
+}
+.at-progress-fill {
+  position: absolute; top: 0; left: 0; height: 100%;
+  background: #2a5a9a; border-radius: 3px;
+  transition: width 0.05s linear;
+}
+.at-progress-handle {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #5a9adf; border: 2px solid #07080d;
+  pointer-events: none; transition: left 0.05s linear;
+}
+.at-progress-wrap:hover .at-progress-handle { background: #7ab4ff; }
+.at-time-left, .at-time-right {
+  position: absolute; bottom: 0;
+  font-size: 10px; font-family: monospace; color: #4a5a7a;
+}
+.at-time-left  { left: 0; }
+.at-time-right { right: 0; }
+
+/* Row 2: transport buttons (left) + volume (right) */
+.at-bottom-row {
+  display: flex; align-items: center;
+  justify-content: space-between; gap: 8px;
+}
+.at-controls { display: flex; gap: 4px; align-items: center; }
+.at-btn {
+  font-size: 14px; background: #111520; border: 1px solid #1e2a3a;
+  color: #5a7abf; border-radius: 4px; width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.1s, color 0.1s;
+  padding: 0; line-height: 1; flex-shrink: 0;
+}
+.at-btn:hover:not(:disabled) { background: #1a2535; color: #7a9adf; }
+.at-btn:disabled { opacity: 0.3; cursor: default; }
+.at-btn--play { width: 36px; height: 36px; font-size: 15px;
+  background: #132030; border-color: #2a4a6a; }
+.at-btn--play:hover:not(:disabled) { background: #1e3045; color: #9abfff; }
+.at-btn--play:disabled { animation: at-spin 1s linear infinite; opacity: 0.7; }
+.at-btn--active { background: #1a3a5a !important; color: #5abfff !important;
+  border-color: #3a6a9a; }
+
+/* Volume slider */
+.at-vol-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.at-vol-icon { font-size: 13px; line-height: 1; }
+.at-vol-slider {
+  -webkit-appearance: none; appearance: none;
+  width: 90px; height: 4px; border-radius: 2px;
+  background: #1e2a3a; outline: none; cursor: pointer;
+}
+.at-vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #5a9adf; border: 2px solid #07080d; cursor: pointer;
+}
+.at-vol-slider::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #5a9adf; border: 2px solid #07080d; cursor: pointer;
+}
+.at-vol-val { font-family: monospace; font-size: 11px; color: #4a5a7a; min-width: 30px; text-align: right; }
+
+/* Light theme */
+[data-theme="light"] .audio-transport { background: #f0f4f8; border-color: #d0d8e4; }
+[data-theme="light"] .at-progress-track { background: #d0d8e4; }
+[data-theme="light"] .at-progress-fill  { background: #4a8adf; }
+[data-theme="light"] .at-btn { background: #e4eaf0; border-color: #c0ccd8; color: #4a6abf; }
+[data-theme="light"] .at-btn:hover:not(:disabled) { background: #d4dff0; }
+[data-theme="light"] .at-time-left, [data-theme="light"] .at-time-right { color: #8a9ab0; }
+[data-theme="light"] .at-vol-slider { background: #c0ccd8; }
+[data-theme="light"] .at-vol-val { color: #7a8a9a; }

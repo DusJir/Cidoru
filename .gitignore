@@ -24,4 +24,5 @@ dist-ssr
 *.sw?
 /Cidoru.iml
 /release/*
-/out/*
+/out/**
+

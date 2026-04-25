@@ -824,6 +824,7 @@ export function IdoruScene({
   onStateChange, audioSlots = null,
   onSlotUpdate = null,
   kbDisabled = false,
+  audioTransportSlot = null,
 }) {
   const { leftBank, rightBank } = sceneCfg;
 
@@ -868,8 +869,16 @@ export function IdoruScene({
     return [...cols];
   }, [selectedRightIndices]);
 
-  // Primary column (for left bank display)
-  const primaryCol = selectedCols[0] ?? null;
+  // Primary column — always the LEFT col of a linked pair, never the right
+  const primaryCol = useMemo(() => {
+    if (selectedCols.length === 0) return null;
+    const col = Math.min(...selectedCols.filter(c => c != null));
+    if (col >= 1 && col <= 6) {
+      const pairIdx = Math.floor((col - 1) / 2);
+      if (linkedPairsRef.current[pairIdx]) return pairIdx * 2 + 1; // left: 1,3,5
+    }
+    return col;
+  }, [selectedCols]);
 
   // Connection count
   const connCount = useMemo(() =>
@@ -879,6 +888,19 @@ export function IdoruScene({
 
   // ── State reporting ──────────────────────────────────────────
   const reportTimer = useRef(null);
+
+  // Report state immediately on mount so AudioTransport has correct gains before first Play
+  useEffect(() => {
+    onStateChange?.({
+      rightFaders: rightFadersRef.current.map(f => ({ ...f })),
+      linkedPairs: [...linkedPairsRef.current],
+      modifierDb:  modifierDbRef.current,
+      matrix:      matrixRef.current.map(r => [...r]),
+      leftMutes:   [...leftMutesRef.current],
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // mount only — intentionally no deps
+
   const reportState = useCallback(() => {
     clearTimeout(reportTimer.current);
     reportTimer.current = setTimeout(() => {
@@ -1267,7 +1289,417 @@ export function IdoruScene({
         </div>
       </div>
 
+      {typeof audioTransportSlot === 'function'
+        ? audioTransportSlot(primaryCol)
+        : audioTransportSlot}
       <RoutingTree matrix={matrix} audioSlots={audioSlots} linkedPairs={linkedPairs} selectedCols={selectedCols} />
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  AUDIO TRANSPORT
+//  Stereo preview of the current song using Web Audio API.
+//  Mix = OUT1-6 columns of the routing matrix, each output fader
+//  applied, stereo-linked pairs → L/R, unlinkd → both channels.
+//  M.TRIM (modifierDb) applied as master gain.
+// ═══════════════════════════════════════════════════════════════════
+function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
+  const ctxRef      = useRef(null);   // AudioContext
+  const sourcesRef  = useRef([]);     // per-slot { source, gainL, gainR, buf }
+  const masterLRef  = useRef(null);   // master gain L
+  const masterRRef  = useRef(null);   // master gain R
+  const mergerRef   = useRef(null);   // ChannelMergerNode
+  const startTimeRef = useRef(null);  // AudioContext time at play start
+  const offsetRef   = useRef(0);      // playback offset in seconds
+
+  const [playing,   setPlaying]   = useState(false);
+  const [duration,  setDuration]  = useState(0);
+  const [position,  setPosition]  = useState(0);
+  const [loading,   setLoading]   = useState(false);
+  const [loadMsg,   setLoadMsg]   = useState('');
+  const [loadErr,   setLoadErr]   = useState(null);
+  const [monitorVol, setMonitorVol] = useState(80); // 0-100, independent master vol
+  const monitorGainRef = useRef(null); // GainNode between merger and destination
+  const buffersRef  = useRef({});     // cacheKey → AudioBuffer
+  const animRef     = useRef(null);
+  const scrubbing   = useRef(false);
+
+  const slots      = song?.audioSlots ?? [];
+  const hasFiles   = slots.some(sl => sl?.fileName);
+  // Disabled when no song, no files, or no output selected
+  const disabled   = !song || !hasFiles || selectedCol == null;
+  const disabledMsg = !song || !hasFiles
+    ? null
+    : selectedCol == null ? 'Select an output to enable preview' : null;
+
+  // Compute per-slot gains from current mixer state for a given column.
+  // col: 0=PHONES, 1-6=OUT1-OUT6
+  // rightFaders layout: [0]=OUT1,[1]=OUT2,...,[5]=OUT6,[6]=PHONES
+  // linkedPairs: [0]=OUT1+2,[1]=OUT3+4,[2]=OUT5+6
+  function computeMix(ms, col) {
+    const matrix      = ms?.matrix      ?? null;
+    const rightFaders = ms?.rightFaders ?? [];
+    const leftMutes   = ms?.leftMutes   ?? [];
+    const linkedPairs = ms?.linkedPairs ?? [false, false, false];
+    const modifierDb  = ms?.modifierDb  ?? 0;
+
+    if (!matrix || col == null) return { slotGains: [], modDb: modifierDb };
+
+    const isPhones = col === 0;
+
+    // PHONES: col 0, fader index 6, never linked, always mono-to-both
+    if (isPhones) {
+      const f   = rightFaders[6] ?? { db: 0, muted: false };
+      if (f.muted) return { slotGains: Array.from({length:6},(_,i)=>({slotIdx:i,gainL:0,gainR:0})), modDb: modifierDb };
+      const db  = typeof f === 'number' ? f : (f.db ?? 0);
+      const fG  = Math.pow(10, db / 20);
+      const slotGains = [];
+      for (let slot = 0; slot < 6; slot++) {
+        const mat = leftMutes[slot] ? 0 : (matrix[slot]?.[0] ?? 0) / 100;
+        slotGains.push({ slotIdx: slot, gainL: mat * fG, gainR: mat * fG });
+      }
+      return { slotGains, modDb: modifierDb };
+    }
+
+    // OUT1-6: col 1-6
+    const pairIdx  = Math.floor((col - 1) / 2);     // 0,1,2
+    const isLinked = linkedPairs[pairIdx] ?? false;
+    const leftCol  = isLinked ? (pairIdx * 2 + 1) : col;
+    const rightCol = isLinked ? (pairIdx * 2 + 2) : col;
+
+    const getFaderGain = (c) => {
+      const f  = rightFaders[c - 1] ?? { db: 0, muted: false };
+      if (f.muted) return 0;
+      const db = typeof f === 'number' ? f : (f.db ?? 0);
+      return Math.pow(10, db / 20);
+    };
+
+    const faderL = getFaderGain(leftCol);
+    const faderR = isLinked ? getFaderGain(rightCol) : faderL;
+
+    const slotGains = [];
+    for (let slot = 0; slot < 6; slot++) {
+      if (leftMutes[slot]) {
+        slotGains.push({ slotIdx: slot, gainL: 0, gainR: 0 });
+        continue;
+      }
+      // For linked pairs: routing mirrors leftCol for both channels.
+      // Stereo L/R split is done by ChannelSplitterNode — not by matrix values.
+      const mat = (matrix[slot]?.[leftCol] ?? 0) / 100;
+      slotGains.push({ slotIdx: slot, gainL: mat * faderL, gainR: mat * faderR });
+    }
+    return { slotGains, modDb: modifierDb };
+  }
+
+  // Apply gains to running sources. Takes explicit ms+col to avoid stale closures.
+  function applyGains(ms, col) {
+    if (!sourcesRef.current.length || !ctxRef.current) return;
+    const { slotGains, modDb } = computeMix(ms, col);
+    const modGain = Math.pow(10, modDb / 20);
+    const gainMap = Object.fromEntries(slotGains.map(sg => [sg.slotIdx, sg]));
+    const now = ctxRef.current.currentTime;
+    sourcesRef.current.forEach(({ gainL, gainR, slotIdx }) => {
+      const sg = gainMap[slotIdx] ?? { gainL: 0, gainR: 0 };
+      gainL.gain.setTargetAtTime(sg.gainL * modGain, now, 0.01);
+      gainR.gain.setTargetAtTime(sg.gainR * modGain, now, 0.01);
+    });
+  }
+
+  // Keep refs current at render time (not useEffect — avoids one-render staleness)
+  const mixerStateRef2 = useRef(mixerState);
+  const selectedColRef2 = useRef(selectedCol);
+  mixerStateRef2.current = mixerState;
+  selectedColRef2.current = selectedCol;
+
+  // Load AudioBuffers for all slots that have cached files
+  async function loadBuffers() {
+    if (!song) return;
+    setLoading(true); setLoadErr(null); setLoadMsg('');
+    const ctx = getOrCreateCtx();
+    const results = {};
+    let maxDur = 0;
+    let loaded = 0; let total = slots.filter(sl => sl?.fileName).length;
+
+    for (let i = 0; i < slots.length; i++) {
+      const sl = slots[i];
+      if (!sl?.fileName) continue;
+      const key = `${song.id}_f${i}`;
+      if (buffersRef.current[key]) {
+        maxDur = Math.max(maxDur, buffersRef.current[key].duration);
+        results[key] = buffersRef.current[key];
+        loaded++; continue;
+      }
+      const cached = fileCache.get(key);
+      if (!cached) { loaded++; continue; }
+      setLoadMsg(`Loading ${sl.fileName} (${++loaded}/${total})…`);
+      try {
+        let arrayBuf;
+        if (typeof cached === 'string') {
+          const raw = await window.electronAPI.audio.readBuffer(cached);
+          if (!raw) { console.warn(`AudioTransport: readBuffer returned null for ${cached}`); continue; }
+          const u8 = new Uint8Array(raw);
+          arrayBuf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+        } else if (cached instanceof File) {
+          arrayBuf = await cached.arrayBuffer();
+        } else continue;
+
+        const decoded = await ctx.decodeAudioData(arrayBuf);
+        results[key]  = decoded;
+        maxDur = Math.max(maxDur, decoded.duration);
+      } catch (e) {
+        console.warn(`AudioTransport: could not decode ${sl.fileName}:`, e.message);
+      }
+    }
+
+    buffersRef.current = { ...buffersRef.current, ...results };
+    setLoadMsg('');
+    if (maxDur > 0) setDuration(maxDur);
+    setLoading(false);
+    return maxDur;
+  }
+
+  function getOrCreateCtx() {
+    if (!ctxRef.current || ctxRef.current.state === 'closed') {
+      ctxRef.current = new AudioContext();
+    }
+    return ctxRef.current;
+  }
+
+  function stopPlayback() {
+    cancelAnimationFrame(animRef.current);
+    sourcesRef.current.forEach(({ source }) => {
+      try { source.stop(); } catch (_) {}
+    });
+    sourcesRef.current = [];
+    masterLRef.current = null;
+    masterRRef.current = null;
+    mergerRef.current  = null;
+  }
+
+  async function startPlayback(fromOffset = 0, ms, col) {
+    const ctx = getOrCreateCtx();
+    if (ctx.state === 'suspended') await ctx.resume();
+
+    // Compute gains from explicitly passed state — no closure staleness
+    const { slotGains, modDb } = computeMix(ms, col);
+    const modGain = Math.pow(10, modDb / 20);
+    const gainMap = Object.fromEntries(slotGains.map(sg => [sg.slotIdx, sg]));
+
+    // Master nodes: merger → monitorGain → destination
+    const merger = ctx.createChannelMerger(2);
+    const monGain = ctx.createGain();
+    monGain.gain.value = monitorVol / 100;
+    merger.connect(monGain);
+    monGain.connect(ctx.destination);
+    monitorGainRef.current = monGain;
+
+    const newSources = [];
+
+    for (let i = 0; i < 6; i++) {
+      const sl  = slots[i];
+      if (!sl?.fileName) continue;
+      const key = `${song.id}_f${i}`;
+      const buf = buffersRef.current[key];
+      if (!buf) continue;
+
+      const source = ctx.createBufferSource();
+      source.buffer = buf;
+
+      // Set correct gain immediately — synchronous, guaranteed for first sample
+      const sg = gainMap[i] ?? { gainL: 0, gainR: 0 };
+      const gL = ctx.createGain(); gL.gain.value = sg.gainL * modGain;
+      const gR = ctx.createGain(); gR.gain.value = sg.gainR * modGain;
+
+      if (buf.numberOfChannels >= 2) {
+        const splitter = ctx.createChannelSplitter(2);
+        source.connect(splitter);
+        splitter.connect(gL, 0);
+        splitter.connect(gR, 1);
+      } else {
+        source.connect(gL);
+        source.connect(gR);
+      }
+      gL.connect(merger, 0, 0);
+      gR.connect(merger, 0, 1);
+
+      const clampedOffset = Math.min(fromOffset, buf.duration - 0.01);
+      source.start(0, clampedOffset);
+      newSources.push({ source, gainL: gL, gainR: gR, buf, slotIdx: i });
+    }
+
+    sourcesRef.current  = newSources;
+    mergerRef.current   = merger;
+    startTimeRef.current = ctx.currentTime;
+    offsetRef.current   = fromOffset;
+
+    // No separate applyGains call needed — gains set synchronously above
+
+    // Position ticker
+    const tick = () => {
+      if (!ctxRef.current) return;
+      const pos = offsetRef.current + (ctxRef.current.currentTime - startTimeRef.current);
+      setPosition(Math.min(pos, duration));
+      if (pos < duration) animRef.current = requestAnimationFrame(tick);
+      else { setPlaying(false); setPosition(0); offsetRef.current = 0; stopPlayback(); }
+    };
+    animRef.current = requestAnimationFrame(tick);
+  }
+
+  // Update gains live without restarting
+  // updateGainsRef — called by effects when mixer state changes
+  const updateGainsRef = useRef(null);
+  updateGainsRef.current = () => applyGains(mixerStateRef2.current, selectedColRef2.current);
+
+  // Update monitor volume live
+  useEffect(() => {
+    if (monitorGainRef.current && ctxRef.current) {
+      monitorGainRef.current.gain.setTargetAtTime(
+        monitorVol / 100, ctxRef.current.currentTime, 0.01
+      );
+    }
+  }, [monitorVol]);
+
+  // When selected output changes while playing — stop (col change = routing change)
+  const prevColRef = useRef(selectedCol);
+  useEffect(() => {
+    if (prevColRef.current !== selectedCol) {
+      prevColRef.current = selectedCol;
+      if (sourcesRef.current.length) {
+        const pos = offsetRef.current + (ctxRef.current
+          ? ctxRef.current.currentTime - startTimeRef.current : 0);
+        offsetRef.current = pos;
+        stopPlayback();
+        setPlaying(false);
+      }
+    }
+  }, [selectedCol]); // eslint-disable-line
+
+  // Keep gains in sync when mixer faders/mutes change while playing
+  useEffect(() => {
+    updateGainsRef.current?.();
+  }, [mixerState]); // eslint-disable-line
+
+  // Stop and reset when song changes
+  useEffect(() => {
+    stopPlayback();
+    setPlaying(false); setPosition(0); offsetRef.current = 0;
+    setDuration(0); setLoadErr(null); setLoadMsg('');
+    buffersRef.current = {};
+  }, [song?.id]); // eslint-disable-line
+
+  // Cleanup on unmount
+  useEffect(() => () => {
+    stopPlayback();
+    ctxRef.current?.close();
+  }, []);
+
+  const handlePlay = async () => {
+    if (playing) {
+      const pos = offsetRef.current + (ctxRef.current.currentTime - startTimeRef.current);
+      offsetRef.current = pos;
+      stopPlayback();
+      setPlaying(false);
+      return;
+    }
+    if (duration === 0) {
+      const dur = await loadBuffers();
+      if (!dur) { setLoadErr("No audio files loaded — use ↑ WAV to pick files first."); return; }
+    }
+    // Capture current state explicitly — no stale closure risk
+    const ms  = mixerStateRef2.current;
+    const col = selectedColRef2.current;
+    await startPlayback(offsetRef.current, ms, col);
+    setPlaying(true);
+  };
+
+  const handleStop = () => {
+    stopPlayback();
+    setPlaying(false);
+    setPosition(0);
+    offsetRef.current = 0;
+  };
+
+  const handleRewind = () => {
+    const cur = offsetRef.current + (playing && ctxRef.current
+      ? ctxRef.current.currentTime - startTimeRef.current : 0);
+    const next = Math.max(0, cur - 5);
+    offsetRef.current = next;
+    setPosition(next);
+    if (playing) { stopPlayback(); startPlayback(next, mixerStateRef2.current, selectedColRef2.current); }
+  };
+
+  const handleFfw = () => {
+    const cur = offsetRef.current + (playing && ctxRef.current
+      ? ctxRef.current.currentTime - startTimeRef.current : 0);
+    const next = Math.min(duration - 0.1, cur + 5);
+    offsetRef.current = next;
+    setPosition(next);
+    if (playing) { stopPlayback(); startPlayback(next, mixerStateRef2.current, selectedColRef2.current); }
+  };
+
+  const handleScrub = (e) => {
+    const rect  = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const next  = ratio * duration;
+    offsetRef.current = next;
+    setPosition(next);
+    if (playing) { stopPlayback(); startPlayback(next, mixerStateRef2.current, selectedColRef2.current); }
+  };
+
+  const fmtTime = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60).toString().padStart(2, '0');
+    return `${m}:${sec}`;
+  };
+
+  const pct = duration > 0 ? (position / duration) * 100 : 0;
+
+  return (
+    <div className={`audio-transport${disabled ? ' audio-transport--disabled' : ''}`}>
+      {(loadErr || loadMsg || disabledMsg) && (
+        <div className={`audio-transport-err${(loadMsg || disabledMsg) && !loadErr ? ' audio-transport-msg' : ''}`}>
+          {loadErr || disabledMsg || loadMsg}
+        </div>
+      )}
+
+      {/* Row 1: progress bar — always full width */}
+      <div className="at-progress-wrap" onClick={disabled ? undefined : handleScrub}>
+        <div className="at-progress-track">
+          <div className="at-progress-fill" style={{ width: `${pct}%` }} />
+          <div className="at-progress-handle" style={{ left: `${pct}%` }} />
+        </div>
+        <div className="at-time-left">{fmtTime(position)}</div>
+        <div className="at-time-right">{fmtTime(duration)}</div>
+      </div>
+
+      {/* Row 2: transport buttons (left) + volume slider (right) */}
+      <div className="at-bottom-row">
+        <div className="at-controls">
+          <button className="at-btn" disabled={disabled}
+            onMouseDown={handleRewind} title="Rewind 5s">⏮</button>
+          <button className="at-btn" disabled={disabled}
+            onClick={handleStop} title="Stop">⏹</button>
+          <button className={`at-btn at-btn--play${playing ? ' at-btn--active' : ''}`}
+            disabled={disabled || loading}
+            onClick={handlePlay}
+            title={playing ? 'Pause' : loading ? 'Loading…' : 'Play'}>
+            {loading ? '⟳' : playing ? '⏸' : '▶'}
+          </button>
+          <button className="at-btn" disabled={disabled}
+            onMouseDown={handleFfw} title="Fast-forward 5s">⏭</button>
+        </div>
+
+        <div className="at-vol-wrap" title="Monitor volume (independent of routing)">
+          <span className="at-vol-icon">🔊</span>
+          <input
+            type="range" min="0" max="100" value={monitorVol}
+            className="at-vol-slider"
+            onChange={e => setMonitorVol(Number(e.target.value))}
+          />
+          <span className="at-vol-val">{monitorVol}%</span>
+        </div>
       </div>
     </div>
   );
@@ -1280,7 +1712,7 @@ export function IdoruScene({
 //  TOOLBAR
 // ═══════════════════════════════════════════════════════════════════
 function ToolBar({ onSave, onLoad, onTransfer, onSwitchView, viewMode, dirty,
-  onExport, onImport, onNewSession, onSavePreset, onScan, onFirmware,
+  onExport, onImport, onImportIdoru, onNewSession, onSavePreset, onScan, onFirmware,
   theme, onToggleTheme }) {
   return (
     <div className="toolbar">
@@ -1311,6 +1743,11 @@ function ToolBar({ onSave, onLoad, onTransfer, onSwitchView, viewMode, dirty,
       <button className="toolbar-btn" onClick={onImport} title="Import session from JSON file">
         <span className="toolbar-btn-icon">↑</span> IMPORT
       </button>
+      {onImportIdoru && (
+        <button className="toolbar-btn" onClick={onImportIdoru} title="Import from original Idoru .idoru session file">
+          <span className="toolbar-btn-icon">↑</span> .IDORU
+        </button>
+      )}
 
       <div className="toolbar-divider" />
 
@@ -2259,6 +2696,44 @@ function WebWelcomeModal({ onClose }) {
 // ═══════════════════════════════════════════════════════════════════
 //  APP
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  UPDATE BANNER — shown below disclaimer bar when update is available
+// ═══════════════════════════════════════════════════════════════════
+function UpdateBanner() {
+  const [state, setState] = useState(null); // null | 'available' | 'downloading' | 'ready'
+  const [info, setInfo]   = useState(null);
+  const [pct,  setPct]    = useState(0);
+
+  useEffect(() => {
+    if (!window.electronAPI?.updater) return;
+    const u = window.electronAPI.updater;
+    const c1 = u.onUpdateAvailable(i   => { setState('available');   setInfo(i); });
+    const c2 = u.onDownloadProgress(p  => { setState('downloading'); setPct(p);  });
+    const c3 = u.onUpdateDownloaded(i  => { setState('ready');       setInfo(i); });
+    return () => { c1(); c2(); c3(); };
+  }, []);
+
+  if (!state) return null;
+
+  const msg = state === 'available'
+    ? `↑ Update v${info?.version} available — downloading…`
+    : state === 'downloading'
+      ? `↓ Downloading update… ${pct}%`
+      : `✓ Update v${info?.version} ready — restart to install`;
+
+  return (
+    <div className={`update-bar update-bar--${state}`}>
+      <span>{msg}</span>
+      {state === 'ready' && (
+        <button className="update-bar-btn"
+          onClick={() => window.electronAPI.updater.install()}>
+          Restart &amp; Install
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function App() {
   const [project,       setProject]      = useState(() => {
     const s = platform.getInitialSession() || emptyProject();
@@ -2399,6 +2874,168 @@ export function App() {
       setDirtyIds(new Set(["__imported"]));
       setSelectedPlId(null); setSongId(null);
       showInfo(`Imported: ${data.playlists.length} playlist(s), ${data.songs.length} song(s).`, "success");
+    } catch (err) { showInfo(`Import failed: ${err.message}`, "error"); }
+  }, [showInfo]);
+
+  // ── Import from .idoru (original Idoru app format) ────────────────
+  const handleImportIdoru = useCallback(async () => {
+    try {
+      const raw = await platform.importIdoru();
+      if (!raw) return;
+      const idoru = JSON.parse(raw);
+      if (!idoru.session || !Array.isArray(idoru.playlists) || !Array.isArray(idoru.songs))
+        throw new Error("Not a valid .idoru file.");
+
+      // ── Playlist order from session.playlists (array of UUIDs) ──────
+      const plOrder = idoru.session.playlists ?? idoru.playlists.map(p => p.id);
+      const plMap   = Object.fromEntries(idoru.playlists.map(p => [p.id, p]));
+      const songMap = Object.fromEntries(idoru.songs.map(s => [s.id, s]));
+
+      // ── Output level: 0-100 → db using CIdoru's routing scale ───────
+      // CIdoru routing fader: 0=−60dB, 90=0dB, 100=+10dB (linear 0–100 → value passed straight)
+      // Right bank fader db: value in the matrix is 0-100, rightFaders use db scale
+      // rightFaders db: 0→−60, 100→+10 linearly
+      const levelToDb = (lvl) => {
+        // 0-100 routing level → −60 to +10 dB (linear mapping)
+        if (lvl == null) return 0;
+        return -60 + (lvl / 100) * 70;
+      };
+
+      const newPlaylists = [];
+      const newSongs     = [];
+      const newMixerStates = {};
+
+      for (const plId of plOrder) {
+        const ipl = plMap[plId];
+        if (!ipl) continue;
+
+        const cidoruPlId  = genId();
+        const cidoruPlUUID = genUUID();
+        newPlaylists.push({ id: cidoruPlId, uuid: cidoruPlUUID, name: ipl.name });
+
+        // Build right bank fader state from playlist-level outputs
+        // rightFaders: [OUT1, OUT2, OUT3, OUT4, OUT5, OUT6, PHONES]
+        const outputs  = ipl.outputs ?? {};
+        const lvl = (key) => outputs[key]?.level ?? 90;
+        const rightFaders = [
+          { db: levelToDb(lvl('output1')) },
+          { db: levelToDb(lvl('output2')) },
+          { db: levelToDb(lvl('output3')) },
+          { db: levelToDb(lvl('output4')) },
+          { db: levelToDb(lvl('output5')) },
+          { db: levelToDb(lvl('output6')) },
+          { db: levelToDb(lvl('headphones')) },
+        ];
+
+        // Stereo links: ["5-6","3-4"] → [false, true, true] (pairs: 1-2, 3-4, 5-6)
+        const stereoLinks = ipl.stereoLinks ?? [];
+        const linkedPairs = [
+          stereoLinks.some(l => l === '1-2'),
+          stereoLinks.some(l => l === '3-4'),
+          stereoLinks.some(l => l === '5-6'),
+        ];
+
+        // Process songs in playlist order
+        for (const songId of (ipl.songs ?? [])) {
+          const isong = songMap[songId];
+          if (!isong) continue;
+
+          // Map inputFiles F1-F6 → audioSlots[0-5]
+          // F7 is AUX/VJ channel — skip (no equivalent in CIdoru)
+          const audioSlots = [null, null, null, null, null, null].map((_, i) => {
+            const key = `F${i + 1}`;
+            const f   = isong.inputFiles?.[key];
+            // Always use displayName from the .idoru file, uppercased
+            // Even if no file is assigned, the channel name must be preserved
+            const rawName   = f?.displayName || key;
+            const shortName = rawName.toUpperCase();
+            if (!f || !f.fileName) {
+              return { fileName: '', shortName, stereo: false, fileUUID: null };
+            }
+            return {
+              fileName:  f.fileName.replace(/\.(wav|WAV)$/, ''),
+              shortName,
+              stereo:    (f.numberOfChannels ?? 1) >= 2,
+              fileUUID:  genUUID(),
+              _sourcePath: f.directory || null,
+            };
+          });
+
+          const midiFile = isong.midiFile?.fileName
+            ? isong.midiFile.fileName.replace(/\.(mid|midi|MID|MIDI)$/, '')
+            : null;
+
+          const queueMap = { QueueNext: 'queue_next', PlayNext: 'play_next', Loop: 'loop' };
+          const cidoruSongId   = genId();
+          const cidoruSongUUID = genUUID();
+
+          newSongs.push({
+            id:          cidoruSongId,
+            uuid:        cidoruSongUUID,
+            playlistId:  cidoruPlId,
+            name:        isong.name,
+            bpm:         isong.bpm ?? 120,
+            queueBehavior: queueMap[isong.endOfSong] ?? 'queue_next',
+            midiFile,
+            midiFileUUID: midiFile ? genUUID() : null,
+            audioSlots,
+          });
+
+          // ── Build matrix from song outputs ────────────────────────
+          // matrix[inIdx][colIdx]: inIdx 0-5 = F1-F6, 6 = AUX
+          // colIdx: 0=PHONES, 1-6=OUT1-OUT6
+          const matrix = Array.from({ length: 7 }, () => Array(7).fill(0));
+          const leftMutes = Array(7).fill(false);
+
+          const outKeys = ['headphones','output1','output2','output3','output4','output5','output6'];
+          outKeys.forEach((outKey, colIdx) => {
+            const outDef = isong.outputs?.[outKey] ?? {};
+            // IN1-IN6 map to F1-F6
+            for (let inIdx = 0; inIdx < 6; inIdx++) {
+              const inKey = `IN${inIdx + 1}`;
+              const inDef = outDef[inKey];
+              if (!inDef || inDef.songFileId === 'NC') continue;
+              // Find which slot this songFileId (F1-F6) maps to
+              const fNum = parseInt(inDef.songFileId?.replace('F','') ?? '0') - 1;
+              if (fNum < 0 || fNum > 5) continue;
+              matrix[fNum][colIdx] = inDef.level ?? 0;
+              // Derive mute from headphones column (most representative)
+              if (colIdx === 0 && inDef.mute) leftMutes[fNum] = true;
+            }
+          });
+
+          // level → modifierDb: .idoru uses 0 (no trim applied in most songs)
+          const modifierDb = isong.level ?? 0;
+
+          newMixerStates[cidoruSongId] = {
+            matrix, leftMutes, rightFaders, linkedPairs, modifierDb,
+          };
+        }
+      }
+
+      // Populate file cache with source paths from .idoru
+      for (const song of newSongs) {
+        for (let i = 0; i < song.audioSlots.length; i++) {
+          const sl = song.audioSlots[i];
+          if (sl._sourcePath) {
+            fileCache.current.set(`${song.id}_f${i}`, sl._sourcePath);
+          }
+          delete sl._sourcePath; // don't persist internal field
+        }
+      }
+
+      setProject({ playlists: newPlaylists, songs: newSongs });
+      setMixerStates(newMixerStates);
+      setDirtyIds(new Set(['__imported']));
+      setSelectedPlId(null); setSongId(null);
+
+      showInfo(
+        `Imported ${newPlaylists.length} playlist(s), ${newSongs.length} song(s) from .idoru. ` +
+        `Running file scan…`, "success"
+      );
+      // Auto-scan after import — file paths from .idoru may or may not exist
+      setTimeout(() => handleScanRef.current?.({ silent: true }), 400);
+
     } catch (err) { showInfo(`Import failed: ${err.message}`, "error"); }
   }, [showInfo]);
 
@@ -2819,7 +3456,7 @@ export function App() {
         onSave={handleSave} onLoad={handleLoad} onTransfer={handleTransfer}
         onSwitchView={() => setViewMode(v => v === "classic" ? "matrix" : "classic")}
         viewMode={viewMode} dirty={dirty}
-        onExport={handleExport} onImport={handleImport}
+        onExport={handleExport} onImport={handleImport} onImportIdoru={handleImportIdoru}
         onNewSession={handleNewSession} onSavePreset={handleSavePreset}
         onScan={handleScan} onFirmware={() => setFirmwareModal(true)}
         theme={theme} onToggleTheme={handleToggleTheme}
@@ -2829,6 +3466,7 @@ export function App() {
         <a href="mailto:barney.estrada@bastardizer.cz" className="disclaimer-link">barney.estrada@bastardizer.cz</a>.
         FOR MORE INFO ABOUT CIDORU APP PLEASE VISIT <a href="https://dev.grinware.cz" target="_blank" className="disclaimer-link">DEV.GRINWARE.CZ</a>.
       </div>
+      <UpdateBanner />
 
       <div className="main-layout">
         <div className="left-column">
@@ -2866,6 +3504,14 @@ export function App() {
               audioSlots={selectedSong?.audioSlots ?? null}
               onSlotUpdate={selectedSongId ? handleSlotUpdate : null}
               kbDisabled={!!(playlistForm || songForm || presetForm || scanModal || confirmModal || firmwareModal || transferModal)}
+              audioTransportSlot={(selectedCol) => (
+                <AudioTransport
+                  song={selectedSong}
+                  mixerState={currentMixerState}
+                  fileCache={fileCache.current}
+                  selectedCol={selectedCol}
+                />
+              )}
             />
           )}
 

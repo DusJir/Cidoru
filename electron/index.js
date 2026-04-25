@@ -5,6 +5,9 @@ import {
   createWriteStream,
 } from 'fs'
 import { readFile, writeFile, mkdir } from 'fs/promises'
+// electron-updater: must use default import in ESM context
+import updater from 'electron-updater'
+const { autoUpdater } = updater
 
 // ── Paths ─────────────────────────────────────────────────────────
 const userData      = () => app.getPath('userData')
@@ -353,6 +356,36 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+
+  // ── Auto-updater ──────────────────────────────────────────────
+  // Only run in packaged app (not dev mode)
+  if (app.isPackaged) {
+    autoUpdater.autoDownload    = true   // download silently in background
+    autoUpdater.autoInstallOnAppQuit = false // we prompt the user
+
+    autoUpdater.on('update-available', (info) => {
+      mainWindow?.webContents.send('updater:update-available', {
+        version: info.version,
+        releaseDate: info.releaseDate,
+      })
+    })
+
+    autoUpdater.on('download-progress', (progress) => {
+      mainWindow?.webContents.send('updater:download-progress', Math.round(progress.percent))
+    })
+
+    autoUpdater.on('update-downloaded', (info) => {
+      mainWindow?.webContents.send('updater:update-downloaded', { version: info.version })
+    })
+
+    autoUpdater.on('error', (err) => {
+      // Silent — don't bother the user with update check failures
+      console.error('Auto-updater error:', err.message)
+    })
+
+    // Check silently 3s after window shows (non-blocking)
+    setTimeout(() => { autoUpdater.checkForUpdates().catch(() => {}) }, 3000)
+  }
 })
 
 app.on('window-all-closed', () => {
@@ -360,6 +393,11 @@ app.on('window-all-closed', () => {
 })
 
 // ── IPC Handlers ──────────────────────────────────────────────────
+
+// Updater — install downloaded update immediately
+ipcMain.handle('updater:install', () => {
+  autoUpdater.quitAndInstall(false, true) // silent=false, forceRunAfter=true
+})
 
 // Provide userData path synchronously (used by preload)
 ipcMain.on('get-user-data-path', (e) => {
@@ -538,6 +576,30 @@ ipcMain.handle('import:json', async () => {
   if (canceled || !filePaths[0]) return null
   try {
     return readFileSync(filePaths[0], 'utf-8')
+  } catch { return null }
+})
+
+// Import .idoru — native open dialog, returns raw file content
+ipcMain.handle('import:idoru', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title:   'Import from Idoru session (.idoru)',
+    filters: [{ name: 'Idoru Session', extensions: ['idoru'] }],
+    properties: ['openFile'],
+  })
+  if (canceled || !filePaths[0]) return null
+  try {
+    return readFileSync(filePaths[0], 'utf-8')
+  } catch { return null }
+})
+
+// Audio preview — read file into buffer for Web Audio API decoding
+ipcMain.handle('audio:readBuffer', async (_, filePath) => {
+  try {
+    if (!filePath || typeof filePath !== 'string') return null
+    if (!existsSync(filePath)) return null
+    // Return Buffer directly — Electron IPC serializes it as Uint8Array (zero-copy path)
+    // Array.from(buf) would serialize 100MB WAV as 100M JSON numbers — catastrophically slow
+    return await readFile(filePath)
   } catch { return null }
 })
 

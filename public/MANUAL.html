@@ -296,8 +296,10 @@
     <li><a href="#s16"><span class="num">16.</span>Validation Rules</a></li>
     <li><a href="#s17"><span class="num">17.</span>Browser Compatibility</a></li>
     <li><a href="#s18"><span class="num">18.</span>Desktop App (Electron)</a></li>
-    <li><a href="#s19"><span class="num">19.</span>Theme</a></li>
-    <li><a href="#s20"><span class="num">20.</span>Contact</a></li>
+    <li><a href="#s19"><span class="num">19.</span>Audio Transport</a></li>
+    <li><a href="#s20"><span class="num">20.</span>Theme</a></li>
+    <li><a href="#s21"><span class="num">21.</span>Automatic Updates</a></li>
+    <li><a href="#s22"><span class="num">22.</span>Contact</a></li>
   </ol>
 </nav>
 
@@ -305,7 +307,7 @@
 <main class="content">
 
 <h1>CIdoru — User Manual</h1>
-<div class="version">Version 1.8.0</div>
+<div class="version">Version 1.9.0</div>
 
 <!-- 1 -->
 <h2 id="s1"><span class="section-num">1</span>Introduction</h2>
@@ -489,6 +491,21 @@
 
 <h3>Import JSON</h3>
 <p>Opens a file picker. Select a previously exported <code>.json</code> file to restore that session.</p>
+
+<h3>Import .idoru</h3>
+<p>Click <strong>↑ .IDORU</strong> in the toolbar to import a session from the original Idoru application's native format. CIdoru reads the <code>.idoru</code> file (which is JSON) and converts it automatically:</p>
+<ul>
+  <li>Playlists and their order are preserved exactly as defined in the original session.</li>
+  <li>Songs F1–F6 are mapped to CIdoru audio slots. The F7 AUX/VJ channel has no equivalent and is silently skipped.</li>
+  <li>The routing matrix is reconstructed from the per-output, per-input routing data in the original file.</li>
+  <li>Output fader levels, stereo link pairs, and queue behaviour (Loop / Queue Next / Play Next) are all imported.</li>
+  <li>File paths from the original session are stored in the file cache automatically — if the files exist at those paths on the current machine, they will be found without relinking.</li>
+</ul>
+<p>A file scan runs automatically after import. Files that are not found at their original paths appear as Missing or Unverified in the scan results — use <strong>Relink</strong> or <strong>⌕ Choose Folder</strong> to resolve them.</p>
+<div class="callout callout--note">
+  <span class="callout-icon">ℹ</span>
+  <span>The <strong>↑ .IDORU</strong> button is only available in the desktop (Electron) version. The web version uses a standard file picker instead.</span>
+</div>
 
 <div class="callout callout--tip">
   <span class="callout-icon">✓</span>
@@ -731,6 +748,9 @@
     <tr><td>SD card transfer</td><td>Chrome / Edge only</td><td class="check-yes">✓ All platforms, native dialog</td></tr>
     <tr><td>Scan verifies files exist</td><td class="check-no">✗ Names only</td><td class="check-yes">✓ Checks disk</td></tr>
     <tr><td>Export / Import dialogs</td><td>Browser download / file input</td><td>Native OS save / open dialog</td></tr>
+    <tr><td>Import .idoru format</td><td>File picker (web)</td><td class="check-yes">✓ Native dialog</td></tr>
+    <tr><td>Audio preview playback</td><td>Files must be re-picked each session</td><td class="check-yes">✓ Files loaded from cache automatically</td></tr>
+    <tr><td>Automatic updates</td><td class="check-no">✗ Manual download</td><td class="check-yes">✓ Background check, one-click install</td></tr>
     <tr><td>Works offline</td><td class="check-no">✗ Needs server</td><td class="check-yes">✓ Fully offline</td></tr>
   </tbody>
 </table>
@@ -760,12 +780,57 @@ chmod +x CIdoru-x.x.x.AppImage
 </div>
 
 <!-- 19 -->
-<h2 id="s19"><span class="section-num">19</span>Theme</h2>
+<h2 id="s19"><span class="section-num">19</span>Audio Transport (Preview Playback)</h2>
+<p>The Audio Transport strip sits between the mixer banks and the routing map. It lets you preview the current song's backing tracks directly in CIdoru — with all fader levels, mutes, stereo links, and M.TRIM applied in real time — without transferring to the IDORU hardware first.</p>
+
+<h3>What you hear</h3>
+<p>The output is a stereo downmix calculated from the OUT1–OUT6 routing columns. For each output, the matrix level and the output fader are multiplied together; stereo-linked pairs contribute to L and R channels respectively; unlinked outputs sum to both. The M.TRIM modifier knob applies as a master gain over the entire mix. Muted input slots are silenced. This is the same signal that the sound engineer would receive across all outputs — making it ideal for balancing levels before a show.</p>
+<p>The headphone monitor output is intentionally excluded: it is a personal monitoring mix at a fixed level and does not reflect the FOH balance.</p>
+
+<h3>Controls</h3>
+<ul>
+  <li><strong>Progress bar</strong> — click anywhere on the bar to scrub to that position. The current time and total duration are shown at each end.</li>
+  <li><strong>⏮ Rewind</strong> — steps back 5 seconds per click.</li>
+  <li><strong>⏹ Stop</strong> — stops playback and returns to the beginning.</li>
+  <li><strong>▶ / ⏸ Play / Pause</strong> — starts playback from the current position; click again to pause in place.</li>
+  <li><strong>⏭ Fast-forward</strong> — steps forward 5 seconds per click.</li>
+  <li><strong>🔊 Monitor volume</strong> — a dedicated slider controlling the preview playback level. Completely independent of all routing faders and output levels — adjusting it does not affect the session data or what gets written to the SD card. Default is 80%.</li>
+</ul>
+<p>All controls are disabled when no song is selected. If the song's files have not been loaded into the cache yet, clicking Play will attempt to load them first; if no files are available a warning message is shown.</p>
+
+<h3>Live level adjustment</h3>
+<p>Fader positions, mutes, and the M.TRIM knob all take effect immediately while the transport is playing — no need to stop and restart. This is the primary use case: play the full song while adjusting output levels until the stereo downmix reflects the balance you want the sound engineer to work with.</p>
+
+<div class="callout callout--note">
+  <span class="callout-icon">ℹ</span>
+  <span>Audio playback uses the Web Audio API and runs entirely in the application — no audio is routed through the IDORU hardware during preview. The stereo output goes to your computer's default audio device.</span>
+</div>
+<div class="callout callout--warn">
+  <span class="callout-icon">⚠</span>
+  <span>In the <strong>web version</strong>, files must be picked in the current session before playback is possible (browser security prevents reading files from disk directly). In the <strong>desktop version</strong>, files are loaded from the persisted file cache automatically.</span>
+</div>
+
+<!-- 20 -->
+<h2 id="s20"><span class="section-num">20</span>Theme</h2>
 <p>CIdoru supports a dark theme (default) and a light theme. Click <strong>☀ LIGHT</strong> / <strong>☾ DARK</strong> in the toolbar to toggle. The preference is remembered across sessions.</p>
 <p>Both themes support all functionality identically. The light theme is suited to bright environments such as daylit rehearsal spaces or outdoor stages.</p>
 
-<!-- 20 -->
-<h2 id="s20"><span class="section-num">20</span>Who am I / Contact</h2>
+<!-- 21 -->
+<h2 id="s21"><span class="section-num">21</span>Automatic Updates</h2>
+<p>The desktop version of CIdoru checks for updates automatically every time it starts. The check is silent and non-blocking — the application is fully usable while it runs in the background.</p>
+<p>If a newer version is available on GitHub, a notification bar appears below the disclaimer bar:</p>
+<ul>
+  <li><strong>Downloading…</strong> — the update is being downloaded silently. A progress percentage is shown.</li>
+  <li><strong>Ready to install</strong> — the download is complete. Click <strong>Restart &amp; Install</strong> to apply it immediately, or simply close and reopen the application later — the update will install on next launch.</li>
+</ul>
+<p>If the update check fails (e.g. no internet connection), nothing is shown and the application continues normally.</p>
+<div class="callout callout--note">
+  <span class="callout-icon">ℹ</span>
+  <span>Automatic updates are only available in the packaged desktop application. The web version and development builds do not check for updates.</span>
+</div>
+
+<!-- 22 -->
+<h2 id="s22"><span class="section-num">22</span>Who am I / Contact</h2>
 <p>CIdoru is developed and maintained by a single person, not by a team, thus any updates, new releases, bugfixes etc. might be not as swift as to one's liking, but that is how it is.</p>
  <p>Release notes, announcements and overall every single piece of information related to CIdoru can be found on <a href="https://dev.grinware.cz" target="_blank">https://dev.grinware.cz</a>.</p>
   <p>For bug reports, questions, or feedback: <a href="mailto:barney.estrada@bastardizer.cz">barney.estrada@bastardizer.cz</a></p>

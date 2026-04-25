@@ -64,10 +64,6 @@ instructions.
 Aside from the visual look and the technology under the hood? Not much. But there are some
 differences. Let's start with a slightly different workflow:
 
-- Audio preview in real time. You can check how all outputs sound like in stereo and modify
-  their respective levels accordingly
-- it reads original Idoru file format. No need to re-create your projects from the scratch.
-- Live update implemented. Whenever new version appears on GitHub, it's downloaded automatically.
 - Everything is present on one screen — the playlists, the songs, everything. Creating a
   playlist, creating a song, editing a song, changing order — you name it, everything is
   within reach without the need to switch screens.
@@ -79,6 +75,10 @@ differences. Let's start with a slightly different workflow:
   navigating with TAB and entering numeric values. You're welcome.
 - The desktop version can check for the latest firmware, download it, and write it to your
   SD card automatically. The web version provides manual instructions instead.
+- Audio preview in real time. You can check how all outputs sound like in stereo and modify
+  their respective levels accordingly
+- it reads original Idoru file format. No need to re-create your projects from the scratch.
+- Live update implemented. Whenever new version appears on GitHub, it's downloaded automatically.
 - CIdoru doesn't have global settings, but introduces presets. A preset is a stored mixer
   state that you can save at any point and apply to another song or session.
 - When creating a new song, you can directly specify which playlist(s) it will belong to.

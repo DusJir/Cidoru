@@ -2,7 +2,6 @@ import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join, basename } from 'path'
 import {
   readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, statSync,
-  createWriteStream,
 } from 'fs'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 // electron-updater: must use default import in ESM context
@@ -151,7 +150,7 @@ async function doTransfer (project, mixerStates, filePaths, sender) {
   // ── session.json ─────────────────────────────────────────────────
   const sessionUUID = project.sessionUUID || '00000000-0000-4000-8000-000000000000'
   await writeIfChanged(join(listsDir, 'session.json'),
-    JSON.stringify({ id: sessionUUID, filePath: '', name: project.name || 'CIdoru Session', deviceImport: false }))
+      JSON.stringify({ id: sessionUUID, filePath: '', name: project.name || 'CIdoru Session', deviceImport: false }))
 
   const expectedPlFolders = new Set()
 
@@ -163,7 +162,7 @@ async function doTransfer (project, mixerStates, filePaths, sender) {
     await mkdir(plDir, { recursive: true })
 
     await writeIfChanged(join(plDir, 'setlist.json'),
-      JSON.stringify({ id: pl.uuid || pl.id, songs: songs.map(s => s.uuid || s.id) }))
+        JSON.stringify({ id: pl.uuid || pl.id, songs: songs.map(s => s.uuid || s.id) }))
 
     const slTxtChanged = await writeIfChanged(join(plDir, `${plName}.txt`), generateSetlistFile(pl, songs, mixerStates))
     if (slTxtChanged) sender.send('transfer:progress', `✓ ${plName}.txt`)
@@ -213,7 +212,7 @@ async function doTransfer (project, mixerStates, filePaths, sender) {
 
     // Delete removed song folders
     try {
-        const existing = readdirSync(plDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name)
+      const existing = readdirSync(plDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name)
       for (const folder of existing) {
         if (!expectedSongFolders.has(folder)) {
           const { rm } = await import('fs/promises')
@@ -280,8 +279,17 @@ function generateSongFile (song, state) {
   SECTIONS.forEach((section, colIdx) => {
     txt += section + CRLF
     for (let inIdx = 0; inIdx < 7; inIdx++) {
-      const level = mat[inIdx][colIdx]
-      const mute  = lf[inIdx] ? ' MUTE' : ''
+      const level   = mat[inIdx][colIdx]
+      const hasFile = inIdx < 6
+          ? !!(slots[inIdx]?.fileName)
+          : true   // AUX IN always considered present
+
+      // Transfer-time consolidation — compute effective mute independently of UI state:
+      // 1. No file → always MUTE (hard rule, ignores leftMutes)
+      // 2. Level == 0 for this output → always MUTE
+      // 3. File present + level > 0 → respect user's leftMutes override only
+      const effectiveMuted = !hasFile || level === 0 || (hasFile && lf[inIdx])
+      const mute = effectiveMuted ? ' MUTE' : ''
       txt += `IN${inIdx+1}- ${IN_KEYS[inIdx]} ${level}${mute}` + CRLF
     }
     txt += CRLF
@@ -513,8 +521,8 @@ ipcMain.handle('pick:midi', async () => {
 // File picking — generic relink (wav or midi)
 ipcMain.handle('pick:relink', async (_, isMidi) => {
   const filters = isMidi
-    ? [{ name: 'MIDI', extensions: ['mid', 'midi'] }]
-    : [{ name: 'WAV Audio', extensions: ['wav'] }]
+      ? [{ name: 'MIDI', extensions: ['mid', 'midi'] }]
+      : [{ name: 'WAV Audio', extensions: ['wav'] }]
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
     title: isMidi ? 'Relink MIDI file' : 'Relink WAV file',
     filters, properties: ['openFile'],
@@ -622,7 +630,7 @@ function parseFirmwareVersion (filename) {
   const m = filename.match(/ver(\d+)_(\d+)(?:_(\d+))?\.bin/i)
   if (!m) return null
   return m[3] ? `${parseInt(m[1])}.${parseInt(m[2])}.${parseInt(m[3])}`
-              : `${parseInt(m[1])}.${parseInt(m[2])}`
+      : `${parseInt(m[1])}.${parseInt(m[2])}`
 }
 
 // Compare version strings like "3.17" > "3.16"
@@ -643,8 +651,8 @@ async function httpFetch (url, method = 'GET') {
     const req = mod.request(url, { method, headers: { 'User-Agent': 'CIdoru/1.4' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         const loc = res.headers.location.startsWith('http')
-          ? res.headers.location
-          : `https://idoru.live${res.headers.location}`
+            ? res.headers.location
+            : `https://idoru.live${res.headers.location}`
         httpFetch(loc, method).then(resolve).catch(reject)
         return
       }
@@ -686,8 +694,8 @@ ipcMain.handle('firmware:check', async () => {
   // or starting from a reasonable baseline if we found nothing.
   // We probe up to 10 minor versions ahead of the highest known.
   const knownHigh = firmwares.length > 0
-    ? firmwares.reduce((best, f) => versionGt(f.version, best) ? f.version : best, firmwares[0].version)
-    : null
+      ? firmwares.reduce((best, f) => versionGt(f.version, best) ? f.version : best, firmwares[0].version)
+      : null
 
   // Parse baseline: if we know ver3.17 was latest before, start probing from there
   let probeStart = knownHigh ? knownHigh.split('.').map(Number) : [0, 1]
@@ -706,9 +714,9 @@ ipcMain.handle('firmware:check', async () => {
     if (version && !probed.has(version)) {
       probed.add(version)
       probePromises.push(
-        httpFetch(url, 'HEAD')
-          .then(res => res.status === 200 ? { url, filename, version } : null)
-          .catch(() => null)
+          httpFetch(url, 'HEAD')
+              .then(res => res.status === 200 ? { url, filename, version } : null)
+              .catch(() => null)
       )
     }
   }
@@ -743,8 +751,8 @@ ipcMain.handle('firmware:download', async (event, url, version) => {
     const req = mod.request(url, { headers: { 'User-Agent': 'CIdoru/1.4' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         const loc = res.headers.location.startsWith('http')
-          ? res.headers.location
-          : `https://idoru.live${res.headers.location}`
+            ? res.headers.location
+            : `https://idoru.live${res.headers.location}`
         downloadStream(loc, dest).then(resolve).catch(reject)
         return
       }

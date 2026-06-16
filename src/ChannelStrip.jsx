@@ -77,13 +77,23 @@ const defaultMatrix = () => Array.from({ length: 7 }, () => Array(7).fill(0));
 //    stereo source→any           = 2 connections
 //    muted source                = 0 connections
 // ═══════════════════════════════════════════════════════════════════
-function countConnections(matrix, audioSlots, linkedPairs, leftMutes) {
+// Counts "live" hardware lines — IDORU hardware has a hard 32-line limit.
+// A (channel, output) cell counts toward this limit only if:
+//   1. matrix level > 0 for that cell (no routing = no line, checked per-column)
+//   2. the channel has a file assigned (no file = MUTE on every output = frees all its lines)
+//   3. the channel is not manually muted (manualMuteFlags = global per-channel flag,
+//      same one used by generateSongFile at transfer time = MUTE on every output)
+// This must mirror generateSongFile's effectiveMuted formula exactly, or the
+// on-screen counter will lie about how many lines the hardware will actually use.
+function countConnections(matrix, audioSlots, linkedPairs, manualMuteFlags) {
   let total = 0;
   for (let inIdx = 0; inIdx < 7; inIdx++) {
-    if (leftMutes?.[inIdx]) continue;
+    const hasFile = inIdx < 6 ? !!(audioSlots?.[inIdx]?.fileName) : true; // AUX IN always present
+    const channelMuted = !hasFile || (manualMuteFlags?.[inIdx] ?? false);
+    if (channelMuted) continue; // no file or manually muted → frees ALL of this channel's lines
     const isStereoSrc = inIdx < 6 ? (audioSlots?.[inIdx]?.stereo ?? false) : false;
     for (let colIdx = 0; colIdx < 7; colIdx++) {
-      if ((matrix?.[inIdx]?.[colIdx] ?? 0) <= 0) continue;
+      if ((matrix?.[inIdx]?.[colIdx] ?? 0) <= 0) continue; // level=0 → no line for this column
       // For linked pairs only count the even strip (first of pair) to avoid double-counting
       const rightIdx = RIGHT_TO_COL.indexOf(colIdx);
       if (rightIdx >= 0 && rightIdx < 6) {
@@ -134,8 +144,8 @@ async function readWavInfo(file) {
     const len  = buf.byteLength;
 
     const fourCC = (off) =>
-      String.fromCharCode(view.getUint8(off),   view.getUint8(off+1),
-                          view.getUint8(off+2), view.getUint8(off+3));
+        String.fromCharCode(view.getUint8(off),   view.getUint8(off+1),
+            view.getUint8(off+2), view.getUint8(off+3));
 
     if (fourCC(0) !== "RIFF" && fourCC(0) !== "RF64") return null;
     if (fourCC(8) !== "WAVE") return null;
@@ -191,100 +201,8 @@ export function validateP1Name(s) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  P-1 FILE GENERATION
-// ═══════════════════════════════════════════════════════════════════
-function sanitizeName(s) {
-  return (s || "unnamed").replace(/[/\\:*?"<>|]/g, "_").slice(0, 31);
-}
-
-// Right bank dB fader → 0-100 P-1 level
-function dbToFileLevel(db, cfg = CONFIG) {
-  return Math.round(dbToNorm(db, cfg) * 100);
-}
-
-export function generateSongFile(song, state) {
-  const mat   = (state?.matrix?.length === 7) ? state.matrix : defaultMatrix();
-  const lf    = state?.leftMutes ?? Array(7).fill(false);
-  const mod   = state?.modifierDb ?? 0;
-  const slots = song?.audioSlots ?? defaultAudioSlots();
-
-  const atEnd = song?.queueBehavior === "loop"      ? "Loop"
-    :           song?.queueBehavior === "play_next"  ? "PlayNext"
-    :                                                  "QueueNext";
-
-  const IN_KEYS = ["F1","F2","F3","F4","F5","F6","AN"];
-  const SECTIONS = ["HeadPhone","Output1","Output2","Output3","Output4","Output5","Output6"];
-  const CRLF = "\r\n";
-
-  let txt = "Global sets" + CRLF;
-  txt += `Level- ${Math.round(mod)}` + CRLF;
-  txt += `BPM- ${song?.bpm ?? 120}` + CRLF;
-  txt += `AtEnd- ${atEnd}` + CRLF + CRLF;
-
-  txt += "Input Files" + CRLF;
-  // All 6 slots always written — empty string if no file assigned
-  for (let i = 0; i < 6; i++) {
-    const sl        = slots[i] ?? {};
-    const shortName = sl.shortName || `F${i+1}`;
-    const fileName  = sl.fileName  || "";
-    txt += `F${i+1}- "${shortName}" "${fileName}"` + CRLF;
-  }
-  txt += `MIDI- ${song?.midiFile ? `"${song.midiFile}"` : ""}` + CRLF + CRLF;
-
-  SECTIONS.forEach((section, colIdx) => {
-    txt += section + CRLF;
-    for (let inIdx = 0; inIdx < 7; inIdx++) {
-      const level = mat[inIdx][colIdx];
-      const mute  = lf[inIdx] ? " MUTE" : "";
-      txt += `IN${inIdx+1}- ${IN_KEYS[inIdx]} ${level}${mute}` + CRLF;
-    }
-    txt += CRLF;
-  });
-  return txt;
-}
-
-// Generate fileMap.json — maps stable file UUIDs to filenames
-// UUIDs are stored in audioSlots as sl.fileUUID and midiFileUUID on the song
-export function generateFileMap(song) {
-  const map = {};
-  const slots = song?.audioSlots ?? [];
-  for (const sl of slots) {
-    if (sl?.fileName && sl?.fileUUID) map[sl.fileUUID] = `${sl.fileName}.wav`;
-  }
-  if (song?.midiFile && song?.midiFileUUID) map[song.midiFileUUID] = `${song.midiFile}.mid`;
-  return map;
-}
-
-export function generateSetlistFile(playlist, songs, mixerStates) {
-  const first = songs.length > 0 ? (mixerStates[songs[0].id] ?? {}) : {};
-  const rf  = first.rightFaders ?? IDORU_SCENE_CONFIG.rightBank.channels.map(c => ({ db: c.initialDb ?? 0 }));
-  const lp  = first.linkedPairs ?? [false, false, false];
-
-  const links = lp.map((on, i) => on ? `${i*2+1}-${i*2+2}` : null).filter(Boolean).join(" ");
-  const lvl = (i) => dbToFileLevel(rf[i]?.db ?? 0);
-  const CRLF = "\r\n";
-
-  let txt = "SetList file" + CRLF + CRLF;
-  txt += "Global sets" + CRLF;
-  if (links) txt += `StereoLinks- ${links}` + CRLF;
-  txt += `HeadPhone- ${lvl(6)}` + CRLF;
-  for (let i = 0; i < 6; i++) txt += `Output${i+1}- ${lvl(i)}` + CRLF;
-  txt += CRLF + "Songs" + CRLF;
-  songs.forEach(s => { txt += `"${s.name}"` + CRLF; });
-  txt += CRLF;
-  return txt;
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  SD CARD TRANSFER
-// ═══════════════════════════════════════════════════════════════════
-// SD CARD TRANSFER moved to platform.js
-export const transferToSdCard = null;
-
-// ═══════════════════════════════════════════════════════════════════
 //  PROJECT STORAGE
 // ═══════════════════════════════════════════════════════════════════
-const STORAGE_KEY = "idoru-p1-project";
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 function genUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -298,12 +216,6 @@ export function defaultAudioSlots() {
 }
 
 function emptyProject() { return { playlists: [], songs: [], mixerStates: {} }; }
-// Storage delegated to platform.js (localStorage in web, file in Electron)
-const readStorage  = () => platform.getInitialSession();
-
-// ── Presets — delegated to platform.js ───────────────────────────
-const PRESET_KEY   = "idoru-p1-presets"; // kept for reference only
-const readPresets  = () => platform.getInitialPresets();
 
 // ═══════════════════════════════════════════════════════════════════
 //  dB MATH
@@ -364,13 +276,13 @@ function ScaleMark({ db, cfg }) {
   const isUnity = db === cfg.UNITY_GAIN_DB;
   const isPos   = db > 0 && cfg.DB_MAX <= 10;
   const label   = cfg.DB_MAX === 100
-    ? String(db)
-    : (db > 0 ? `+${db}` : db === cfg.DB_MIN ? "-∞" : String(db));
+      ? String(db)
+      : (db > 0 ? `+${db}` : db === cfg.DB_MIN ? "-∞" : String(db));
   return (
-    <div className="scale-mark" style={{ top }}>
-      <span className={`scale-label${isUnity ? " scale-label--unity" : isPos ? " scale-label--pos" : ""}`}>{label}</span>
-      <div className={`scale-tick${isUnity ? " scale-tick--unity" : isPos ? " scale-tick--pos" : ""}`} />
-    </div>
+      <div className="scale-mark" style={{ top }}>
+        <span className={`scale-label${isUnity ? " scale-label--unity" : isPos ? " scale-label--pos" : ""}`}>{label}</span>
+        <div className={`scale-tick${isUnity ? " scale-tick--unity" : isPos ? " scale-tick--pos" : ""}`} />
+      </div>
   );
 }
 
@@ -380,37 +292,45 @@ function ScaleMark({ db, cfg }) {
 function VuMeter({ level, cfg }) {
   const SEG = 24, ge = Math.floor(SEG * 0.65), ye = Math.floor(SEG * 0.85);
   return (
-    <div className="vu-meter" style={{ height: cfg.FADER_TRACK_HEIGHT }}>
-      {Array.from({ length: SEG }, (_, i) => {
-        const active = level >= i / SEG, isRed = i >= ye, isYellow = i >= ge && !isRed;
-        const bg = isRed ? (active ? "var(--cs-vu-red-on)" : "var(--cs-vu-red-off)")
-          : isYellow    ? (active ? "var(--cs-vu-yellow-on)" : "var(--cs-vu-yellow-off)")
-                        : (active ? "var(--cs-vu-green-on)"  : "var(--cs-vu-green-off)");
-        const shadow = active && isRed ? "var(--cs-vu-red-glow)" : active && isYellow ? "var(--cs-vu-yellow-glow)" : "none";
-        return <div key={i} className="vu-segment"
-          style={{ background: bg, boxShadow: shadow, transition: `background ${cfg.VU_DECAY_MS}ms ease` }} />;
-      })}
-    </div>
+      <div className="vu-meter" style={{ height: cfg.FADER_TRACK_HEIGHT }}>
+        {Array.from({ length: SEG }, (_, i) => {
+          const active = level >= i / SEG, isRed = i >= ye, isYellow = i >= ge && !isRed;
+          const bg = isRed ? (active ? "var(--cs-vu-red-on)" : "var(--cs-vu-red-off)")
+              : isYellow    ? (active ? "var(--cs-vu-yellow-on)" : "var(--cs-vu-yellow-off)")
+                  : (active ? "var(--cs-vu-green-on)"  : "var(--cs-vu-green-off)");
+          const shadow = active && isRed ? "var(--cs-vu-red-glow)" : active && isYellow ? "var(--cs-vu-yellow-glow)" : "none";
+          return <div key={i} className="vu-segment"
+                      style={{ background: bg, boxShadow: shadow, transition: `background ${cfg.VU_DECAY_MS}ms ease` }} />;
+        })}
+      </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  Mono / Stereo Indicator
 // ═══════════════════════════════════════════════════════════════════
-function MonoStereoIndicator({ stereo }) {
+function MonoStereoIndicator({ stereo, onToggle }) {
   return (
-    <div className="top-control-slot ms-slot" title={stereo ? "Stereo source" : "Mono source"}>
-      {stereo ? (
-        <svg className="ms-icon ms-icon--stereo" viewBox="0 0 26 14">
-          <circle cx="9"  cy="7" r="5.5" />
-          <circle cx="17" cy="7" r="5.5" />
-        </svg>
-      ) : (
-        <svg className="ms-icon ms-icon--mono" viewBox="0 0 14 14">
-          <circle cx="7" cy="7" r="5.5" />
-        </svg>
-      )}
-    </div>
+      <button
+          type="button"
+          className={`top-control-slot ms-slot${onToggle ? " ms-slot--clickable" : ""}`}
+          title={onToggle
+              ? `${stereo ? "Stereo" : "Mono"} source — click to switch to ${stereo ? "mono" : "stereo"}`
+              : (stereo ? "Stereo source" : "Mono source")}
+          onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
+          disabled={!onToggle}
+      >
+        {stereo ? (
+            <svg className="ms-icon ms-icon--stereo" viewBox="0 0 26 14">
+              <circle cx="9"  cy="7" r="5.5" />
+              <circle cx="17" cy="7" r="5.5" />
+            </svg>
+        ) : (
+            <svg className="ms-icon ms-icon--mono" viewBox="0 0 14 14">
+              <circle cx="7" cy="7" r="5.5" />
+            </svg>
+        )}
+      </button>
   );
 }
 
@@ -419,14 +339,14 @@ function MonoStereoIndicator({ stereo }) {
 // ═══════════════════════════════════════════════════════════════════
 function LinkBtn({ active, onToggle }) {
   return (
-    <div className="top-control-slot">
-      <button className={`link-btn${active ? " link-btn--active" : ""}`}
-        onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
-        title={active ? "Unlink stereo pair" : "Link as stereo pair"}>
-        <span className="link-btn-icon">{active ? "⊟" : "⊞"}</span>
-        <span className="link-btn-label">{active ? "LINKED" : "LINK"}</span>
-      </button>
-    </div>
+      <div className="top-control-slot">
+        <button className={`link-btn${active ? " link-btn--active" : ""}`}
+                onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
+                title={active ? "Unlink stereo pair" : "Link as stereo pair"}>
+          <span className="link-btn-icon">{active ? "⊟" : "⊞"}</span>
+          <span className="link-btn-label">{active ? "LINKED" : "LINK"}</span>
+        </button>
+      </div>
   );
 }
 
@@ -445,18 +365,18 @@ function ModifierKnob({ db, onChange, mc = MODIFIER_CONFIG }) {
   }, [onChange, mc]);
   const angle = (modDbToNorm(db, mc) - 0.5) * 280;
   return (
-    <div className="modifier-knob-ring" style={{ width: 66, height: 66 }}>
-      <div className="modifier-knob" onMouseDown={onMouseDown}
-        onDoubleClick={() => onChange(mc.DEFAULT_DB ?? 0)} title="Double-click to reset"
-        style={{ transform: `rotate(${angle}deg)` }}>
-        <div className="modifier-knob-indicator" />
+      <div className="modifier-knob-ring" style={{ width: 66, height: 66 }}>
+        <div className="modifier-knob" onMouseDown={onMouseDown}
+             onDoubleClick={() => onChange(mc.DEFAULT_DB ?? 0)} title="Double-click to reset"
+             style={{ transform: `rotate(${angle}deg)` }}>
+          <div className="modifier-knob-indicator" />
+        </div>
       </div>
-    </div>
   );
 }
 
 export function ModifierStrip({ label = "MODIFIER", initialDb = 0, bank = null,
-  mc = MODIFIER_CONFIG, cfg = CONFIG, isActive = false, onActivate, onValueChange, syncDb = null }) {
+                                mc = MODIFIER_CONFIG, cfg = CONFIG, isActive = false, onActivate, onValueChange, syncDb = null }) {
   const [db, setDb] = useState(initialDb);
   const le  = useEditableText(label);
   const dbe = useEditableDb(mc.DB_MIN, mc.DB_MAX, (v) => { setDb(v); onValueChange?.({ bank, value: v, label: le.text }); });
@@ -468,28 +388,28 @@ export function ModifierStrip({ label = "MODIFIER", initialDb = 0, bank = null,
 
   const displayDb = db === 0 ? "0.0 dB" : db > 0 ? `+${db.toFixed(1)} dB` : `${db.toFixed(1)} dB`;
   return (
-    <div className={`modifier-strip${isActive ? " modifier-strip--active" : ""}`} onMouseDown={onActivate}>
-      {le.editing
-        ? <input ref={le.inputRef} className="channel-label-input" value={le.draft} maxLength={12}
-            onChange={(e) => le.setDraft(e.target.value)} onBlur={() => le.commit(le.draft)} onKeyDown={le.onKeyDown} />
-        : <div className="modifier-label" onDoubleClick={le.open}>{le.text}</div>
-      }
-      <div className="top-control-slot top-control-slot--empty" aria-hidden="true" />
-      <div className="modifier-knob-area" style={{ height: cfg.FADER_TRACK_HEIGHT }}>
-        <span className="modifier-sub-label">GAIN OFFSET</span>
-        <ModifierKnob db={db} onChange={handleKnob} mc={mc} />
-        <span className="modifier-sub-label">{mc.DB_MIN} → +{mc.DB_MAX} dB</span>
+      <div className={`modifier-strip${isActive ? " modifier-strip--active" : ""}`} onMouseDown={onActivate}>
+        {le.editing
+            ? <input ref={le.inputRef} className="channel-label-input" value={le.draft} maxLength={12}
+                     onChange={(e) => le.setDraft(e.target.value)} onBlur={() => le.commit(le.draft)} onKeyDown={le.onKeyDown} />
+            : <div className="modifier-label" onDoubleClick={le.open}>{le.text}</div>
+        }
+        <div className="top-control-slot top-control-slot--empty" aria-hidden="true" />
+        <div className="modifier-knob-area" style={{ height: cfg.FADER_TRACK_HEIGHT }}>
+          <span className="modifier-sub-label">GAIN OFFSET</span>
+          <ModifierKnob db={db} onChange={handleKnob} mc={mc} />
+          <span className="modifier-sub-label">{mc.DB_MIN} → +{mc.DB_MAX} dB</span>
+        </div>
+        {dbe.editing
+            ? <input ref={dbe.inputRef} className="db-readout-input" value={dbe.draft} placeholder="e.g. +3"
+                     onChange={(e) => dbe.setDraft(e.target.value)} onBlur={() => dbe.commit(dbe.draft)} onKeyDown={dbe.onKeyDown} />
+            : <div className="db-readout" onDoubleClick={() => dbe.open(db)}>{displayDb}</div>
+        }
+        <div className="modifier-btn-placeholder" aria-hidden="true">
+          <div className="channel-btn-placeholder" aria-hidden="true" />
+        </div>
+        <div className="strip-file-dot strip-file-dot--placeholder" aria-hidden="true" />
       </div>
-      {dbe.editing
-        ? <input ref={dbe.inputRef} className="db-readout-input" value={dbe.draft} placeholder="e.g. +3"
-            onChange={(e) => dbe.setDraft(e.target.value)} onBlur={() => dbe.commit(dbe.draft)} onKeyDown={dbe.onKeyDown} />
-        : <div className="db-readout" onDoubleClick={() => dbe.open(db)}>{displayDb}</div>
-      }
-      <div className="modifier-btn-placeholder" aria-hidden="true">
-        <div className="channel-btn-placeholder" aria-hidden="true" />
-      </div>
-      <div className="strip-file-dot strip-file-dot--placeholder" aria-hidden="true" />
-    </div>
   );
 }
 
@@ -504,17 +424,19 @@ export function ModifierStrip({ label = "MODIFIER", initialDb = 0, bank = null,
 //    initialDb = matrix value for the primary selected output.
 // ═══════════════════════════════════════════════════════════════════
 export default function ChannelStrip({
-  label = "CH 1", initialDb = 0, initialMuted = false,
-  bank = null, isActive = false, onActivate,
-  onFaderChange, onMuteChange,
-  cfg = CONFIG, showVu = true, vuLevel = null,
-  showLinkBtn = false, linkActive = false, onLinkToggle,
-  syncDb = null, syncMuted = null, stereoMode = null,
-  onFilePick = null,
-  fileName = null,
-  shortName = null,
-  onReset = null,
-}) {
+                                       label = "CH 1", initialDb = 0, initialMuted = false,
+                                       bank = null, isActive = false, onActivate,
+                                       onFaderChange, onMuteChange,
+                                       cfg = CONFIG, showVu = true, vuLevel = null,
+                                       showLinkBtn = false, linkActive = false, onLinkToggle,
+                                       syncDb = null, syncMuted = null, stereoMode = null,
+                                       onFilePick = null,
+                                       fileName = null,
+                                       shortName = null,
+                                       onReset = null,
+                                       muteHardBlocked = false,
+                                       onStereoToggle = null,
+                                     }) {
   const [db,        setDb]        = useState(initialDb);
   const [muted,     setMuted]     = useState(initialMuted);
   const [demoLevel, setDemoLevel] = useState(0.5);
@@ -570,6 +492,7 @@ export default function ChannelStrip({
     setDb(cfg.UNITY_GAIN_DB); onFaderChange?.(payload(cfg.UNITY_GAIN_DB, n));
   };
   const handleMute = () => {
+    if (muteHardBlocked) return; // forced mute — toggle would have no visible effect
     const n = !muted; setMuted(n); onMuteChange?.({ bank, muted: n, label: le.text });
   };
 
@@ -580,76 +503,79 @@ export default function ChannelStrip({
   const activeVu   = vuLevel !== null ? vuLevel : demoLevel;
 
   const displayVal = isRouting
-    ? String(Math.round(Math.max(0, Math.min(100, db))))
-    : db <= cfg.DB_MIN ? "-∞ dB" : db > 0 ? `+${db.toFixed(1)} dB` : `${db.toFixed(1)} dB`;
+      ? String(Math.round(Math.max(0, Math.min(100, db))))
+      : db <= cfg.DB_MIN ? "-∞ dB" : db > 0 ? `+${db.toFixed(1)} dB` : `${db.toFixed(1)} dB`;
 
   const readoutMod = isRouting
-    ? (db >= 85 ? "db-readout--hot" : db > 0 ? "db-readout--routing" : "db-readout--muted")
-    : muted ? "db-readout--muted" : db > 0 ? "db-readout--hot" : db > -6 ? "db-readout--warm" : "";
+      ? (db >= 85 ? "db-readout--hot" : db > 0 ? "db-readout--routing" : "db-readout--muted")
+      : muted ? "db-readout--muted" : db > 0 ? "db-readout--hot" : db > -6 ? "db-readout--warm" : "";
 
   const topSlot = stereoMode !== null
-    ? <MonoStereoIndicator stereo={stereoMode === "stereo"} />
-    : showLinkBtn
-      ? <LinkBtn active={linkActive} onToggle={() => { onLinkToggle?.(); onActivate?.(); }} />
-      : <div className="top-control-slot top-control-slot--empty" aria-hidden="true" />;
+      ? <MonoStereoIndicator stereo={stereoMode === "stereo"} onToggle={onStereoToggle} />
+      : showLinkBtn
+          ? <LinkBtn active={linkActive} onToggle={() => { onLinkToggle?.(); onActivate?.(); }} />
+          : <div className="top-control-slot top-control-slot--empty" aria-hidden="true" />;
 
   return (
-    <div className={`channel-strip${isActive ? " channel-strip--active" : ""}${isRouting ? " channel-strip--routing" : ""}`}
-      onMouseDown={onActivate}>
-      {le.editing
-        ? <input ref={le.inputRef} className="channel-label-input" value={le.draft} maxLength={8}
-            onChange={(e) => le.setDraft(e.target.value)} onBlur={() => le.commit(le.draft)} onKeyDown={le.onKeyDown} />
-        : <div className="channel-label" onDoubleClick={le.open}>{le.text}</div>
-      }
-      {topSlot}
-      <div className="fader-area">
-        {showVu && !isRouting && <VuMeter level={activeVu} cfg={cfg} />}
-        <div className="scale-container" style={{ width: 38, height: cfg.FADER_TRACK_HEIGHT }}>
-          {cfg.SCALE_MARKS.map(d => <ScaleMark key={d} db={d} cfg={cfg} />)}
-        </div>
-        <div ref={trackRef} className="fader-track" style={{ width: cfg.RIDER_WIDTH, height: cfg.FADER_TRACK_HEIGHT }}>
-          <div className="fader-rail"       style={{ top: railTop, height: railHeight }} />
-          <div className="fader-unity-mark" style={{ top: unityTop }} />
-          <div className="fader-rider" onMouseDown={handleMouseDown} onDoubleClick={handleRiderDblClick}
-            title="Double-click to reset to unity"
-            style={{ top: riderTop, width: cfg.RIDER_WIDTH, height: cfg.RIDER_HEIGHT }}>
-            <div className="rider-grip" />
-            <div className="rider-grip rider-grip--center" />
-            <div className="rider-grip" />
+      <div className={`channel-strip${isActive ? " channel-strip--active" : ""}${isRouting ? " channel-strip--routing" : ""}`}
+           onMouseDown={onActivate}>
+        {le.editing
+            ? <input ref={le.inputRef} className="channel-label-input" value={le.draft} maxLength={8}
+                     onChange={(e) => le.setDraft(e.target.value)} onBlur={() => le.commit(le.draft)} onKeyDown={le.onKeyDown} />
+            : <div className="channel-label" onDoubleClick={le.open}>{le.text}</div>
+        }
+        {topSlot}
+        <div className="fader-area">
+          {showVu && !isRouting && <VuMeter level={activeVu} cfg={cfg} />}
+          <div className="scale-container" style={{ width: 38, height: cfg.FADER_TRACK_HEIGHT }}>
+            {cfg.SCALE_MARKS.map(d => <ScaleMark key={d} db={d} cfg={cfg} />)}
+          </div>
+          <div ref={trackRef} className="fader-track" style={{ width: cfg.RIDER_WIDTH, height: cfg.FADER_TRACK_HEIGHT }}>
+            <div className="fader-rail"       style={{ top: railTop, height: railHeight }} />
+            <div className="fader-unity-mark" style={{ top: unityTop }} />
+            <div className="fader-rider" onMouseDown={handleMouseDown} onDoubleClick={handleRiderDblClick}
+                 title="Double-click to reset to unity"
+                 style={{ top: riderTop, width: cfg.RIDER_WIDTH, height: cfg.RIDER_HEIGHT }}>
+              <div className="rider-grip" />
+              <div className="rider-grip rider-grip--center" />
+              <div className="rider-grip" />
+            </div>
           </div>
         </div>
-      </div>
-      {dbe.editing
-        ? <input ref={dbe.inputRef} className="db-readout-input" value={dbe.draft}
-            placeholder={isRouting ? "0–100" : "e.g. -12"}
-            onChange={(e) => dbe.setDraft(e.target.value)} onBlur={() => dbe.commit(dbe.draft)} onKeyDown={dbe.onKeyDown} />
-        : <div className={`db-readout ${readoutMod}`} onDoubleClick={() => dbe.open(db)}>{displayVal}</div>
-      }
-      <div className="channel-buttons">
-        <button className={`channel-btn channel-btn--mute${muted ? " channel-btn--active" : ""}`}
-          onClick={() => { handleMute(); onActivate?.(); }}>M</button>
-        {onFilePick && (
-          <button className="channel-btn channel-btn--pick"
-            onClick={(e) => { e.stopPropagation(); onFilePick(); }}
-            title={fileName ? `${fileName}.wav — click to reassign` : "Assign WAV file to this strip"}>↑</button>
-        )}
-        {onReset
-          ? <button className="channel-btn channel-btn--reset"
-              onClick={(e) => { e.stopPropagation(); onReset(); }}
-              title="Reset strip — removes file, resets fader, mute and mode">R</button>
-          : <div className="channel-btn-placeholder" aria-hidden="true" />
+        {dbe.editing
+            ? <input ref={dbe.inputRef} className="db-readout-input" value={dbe.draft}
+                     placeholder={isRouting ? "0–100" : "e.g. -12"}
+                     onChange={(e) => dbe.setDraft(e.target.value)} onBlur={() => dbe.commit(dbe.draft)} onKeyDown={dbe.onKeyDown} />
+            : <div className={`db-readout ${readoutMod}`} onDoubleClick={() => dbe.open(db)}>{displayVal}</div>
+        }
+        <div className="channel-buttons">
+          <button className={`channel-btn channel-btn--mute${muted ? " channel-btn--active" : ""}${muteHardBlocked ? " channel-btn--locked" : ""}`}
+                  onClick={() => { if (muteHardBlocked) { onActivate?.(); return; } handleMute(); onActivate?.(); }}
+                  disabled={muteHardBlocked}
+                  title={muteHardBlocked ? "Muted automatically — no file assigned or level is 0" : undefined}
+          >M</button>
+          {onFilePick && (
+              <button className="channel-btn channel-btn--pick"
+                      onClick={(e) => { e.stopPropagation(); onFilePick(); }}
+                      title={fileName ? `${fileName}.wav — click to reassign` : "Assign WAV file to this strip"}>↑</button>
+          )}
+          {onReset
+              ? <button className="channel-btn channel-btn--reset"
+                        onClick={(e) => { e.stopPropagation(); onReset(); }}
+                        title="Reset strip — removes file, resets fader, mute and mode">R</button>
+              : <div className="channel-btn-placeholder" aria-hidden="true" />
+          }
+        </div>
+        {/* File occupancy indicator — always rendered for uniform strip height */}
+        {onFilePick
+            ? <div className={`strip-file-dot${fileName ? " strip-file-dot--assigned" : " strip-file-dot--empty"}`}
+                   title={fileName ? `${shortName ? shortName + ": " : ""}${fileName}.wav` : "No file assigned"}>
+              <span className="strip-file-dot-pip" />
+              {fileName && <span className="strip-file-dot-name">{shortName || fileName.slice(0, 4)}</span>}
+            </div>
+            : <div className="strip-file-dot strip-file-dot--placeholder" aria-hidden="true" />
         }
       </div>
-      {/* File occupancy indicator — always rendered for uniform strip height */}
-      {onFilePick
-        ? <div className={`strip-file-dot${fileName ? " strip-file-dot--assigned" : " strip-file-dot--empty"}`}
-            title={fileName ? `${shortName ? shortName + ": " : ""}${fileName}.wav` : "No file assigned"}>
-            <span className="strip-file-dot-pip" />
-            {fileName && <span className="strip-file-dot-name">{shortName || fileName.slice(0, 4)}</span>}
-          </div>
-        : <div className="strip-file-dot strip-file-dot--placeholder" aria-hidden="true" />
-      }
-    </div>
   );
 }
 
@@ -680,33 +606,33 @@ function RoutingTree({ matrix, audioSlots, linkedPairs, selectedCols }) {
 
   if (outputs.length === 0) {
     return (
-      <div className="routing-tree routing-tree--empty">
-        No routing yet. Select an output on the right, then adjust input gains on the left.
-      </div>
+        <div className="routing-tree routing-tree--empty">
+          No routing yet. Select an output on the right, then adjust input gains on the left.
+        </div>
     );
   }
 
   return (
-    <div className="routing-tree">
-      <div className="routing-tree-title">Routing Map</div>
-      <div className="routing-tree-body">
-        {outputs.map(({ colIdx, outLabel, inputs, linked, isSelected }) => (
-          <div key={colIdx} className={`rt-out${isSelected ? " rt-out--sel" : ""}`}>
+      <div className="routing-tree">
+        <div className="routing-tree-title">Routing Map</div>
+        <div className="routing-tree-body">
+          {outputs.map(({ colIdx, outLabel, inputs, linked, isSelected }) => (
+              <div key={colIdx} className={`rt-out${isSelected ? " rt-out--sel" : ""}`}>
             <span className="rt-out-label">
               {outLabel}{linked ? <span className="rt-linked-badge"> ⊟</span> : null}
             </span>
-            <div className="rt-inputs">
-              {inputs.map(({ inIdx, level, label, stereo }) => (
-                <span key={inIdx} className={`rt-in${level >= 85 ? " rt-in--hot" : level >= 50 ? " rt-in--mid" : " rt-in--low"}`}>
+                <div className="rt-inputs">
+                  {inputs.map(({ inIdx, level, label, stereo }) => (
+                      <span key={inIdx} className={`rt-in${level >= 85 ? " rt-in--hot" : level >= 50 ? " rt-in--mid" : " rt-in--low"}`}>
                   {stereo ? "⊚" : "○"}{label}
-                  <span className="rt-level">{level}</span>
+                        <span className="rt-level">{level}</span>
                 </span>
-              ))}
-            </div>
-          </div>
-        ))}
+                  ))}
+                </div>
+              </div>
+          ))}
+        </div>
       </div>
-    </div>
   );
 }
 
@@ -739,11 +665,11 @@ export function MatrixView({ song, matrix, onChange, disabled, linkedPairs }) {
   };
 
   return (
-    <div className={`matrix-view${disabled ? " matrix-view--disabled" : ""}`}>
-      <div className="matrix-hint">TAB between cells · 0–100 · 0 = no routing · 90 = unity</div>
-      <div className="matrix-scroll">
-        <table className="matrix-table">
-          <thead>
+      <div className={`matrix-view${disabled ? " matrix-view--disabled" : ""}`}>
+        <div className="matrix-hint">TAB between cells · 0–100 · 0 = no routing · 90 = unity</div>
+        <div className="matrix-scroll">
+          <table className="matrix-table">
+            <thead>
             <tr>
               <th className="matrix-corner">IN \ OUT</th>
               {COL_LABEL.map((o, ci) => {
@@ -753,34 +679,34 @@ export function MatrixView({ song, matrix, onChange, disabled, linkedPairs }) {
                 return <th key={ci} className={`matrix-col-header${linked ? " matrix-col--linked" : ""}`}>{o}</th>;
               })}
             </tr>
-          </thead>
-          <tbody>
+            </thead>
+            <tbody>
             {rowHeaders.map((row, rIdx) => (
-              <tr key={rIdx}>
-                <td className="matrix-row-header">
-                  {row.stereo
-                    ? <svg className="ms-icon--stereo" viewBox="0 0 26 14" style={{width:18,height:10,flexShrink:0}}><circle cx="9" cy="7" r="5" fill="none" stroke="var(--cs-ms-stereo-color)" strokeWidth="2"/><circle cx="17" cy="7" r="5" fill="none" stroke="var(--cs-ms-stereo-color)" strokeWidth="2"/></svg>
-                    : <svg className="ms-icon--mono"   viewBox="0 0 14 14" style={{width:10,height:10,flexShrink:0}}><circle cx="7" cy="7" r="5" fill="none" stroke="var(--cs-ms-mono-color)"   strokeWidth="2"/></svg>
-                  }
-                  <span className="matrix-row-short">{row.short}</span>
-                  <span className="matrix-row-full">{row.full}</span>
-                </td>
-                {COL_LABEL.map((_, cIdx) => (
-                  <td key={cIdx} className="matrix-cell-td">
-                    <input type="number" min={0} max={100}
-                      className={`matrix-cell${mat[rIdx][cIdx] > 0 ? " matrix-cell--active" : ""}`}
-                      value={mat[rIdx][cIdx]}
-                      onChange={e => handleCell(rIdx, cIdx, e.target.value)}
-                      disabled={disabled}
-                    />
+                <tr key={rIdx}>
+                  <td className="matrix-row-header">
+                    {row.stereo
+                        ? <svg className="ms-icon--stereo" viewBox="0 0 26 14" style={{width:18,height:10,flexShrink:0}}><circle cx="9" cy="7" r="5" fill="none" stroke="var(--cs-ms-stereo-color)" strokeWidth="2"/><circle cx="17" cy="7" r="5" fill="none" stroke="var(--cs-ms-stereo-color)" strokeWidth="2"/></svg>
+                        : <svg className="ms-icon--mono"   viewBox="0 0 14 14" style={{width:10,height:10,flexShrink:0}}><circle cx="7" cy="7" r="5" fill="none" stroke="var(--cs-ms-mono-color)"   strokeWidth="2"/></svg>
+                    }
+                    <span className="matrix-row-short">{row.short}</span>
+                    <span className="matrix-row-full">{row.full}</span>
                   </td>
-                ))}
-              </tr>
+                  {COL_LABEL.map((_, cIdx) => (
+                      <td key={cIdx} className="matrix-cell-td">
+                        <input type="number" min={0} max={100}
+                               className={`matrix-cell${mat[rIdx][cIdx] > 0 ? " matrix-cell--active" : ""}`}
+                               value={mat[rIdx][cIdx]}
+                               onChange={e => handleCell(rIdx, cIdx, e.target.value)}
+                               disabled={disabled}
+                        />
+                      </td>
+                  ))}
+                </tr>
             ))}
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
   );
 }
 
@@ -792,13 +718,13 @@ function ConnectionCounter({ count }) {
   const pct = Math.min(1, count / MAX);
   const cls = count >= MAX ? "conn-badge--full" : count >= 28 ? "conn-badge--warn" : "conn-badge--ok";
   return (
-    <div className={`conn-badge ${cls}`}>
-      <span className="conn-badge-label">CONNECTIONS</span>
-      <span className="conn-badge-count">{count}<span className="conn-badge-max">/{MAX}</span></span>
-      <div className="conn-badge-bar">
-        <div className="conn-badge-fill" style={{ width: `${pct * 100}%` }} />
+      <div className={`conn-badge ${cls}`}>
+        <span className="conn-badge-label">CONNECTIONS</span>
+        <span className="conn-badge-count">{count}<span className="conn-badge-max">/{MAX}</span></span>
+        <div className="conn-badge-bar">
+          <div className="conn-badge-fill" style={{ width: `${pct * 100}%` }} />
+        </div>
       </div>
-    </div>
   );
 }
 
@@ -818,14 +744,15 @@ function ConnectionCounter({ count }) {
 //    • No output selected → left bank dimmed, non-interactive.
 // ═══════════════════════════════════════════════════════════════════
 export function IdoruScene({
-  onEvent, sceneCfg = IDORU_SCENE_CONFIG,
-  initialLinkedPairs = [false, false, false],
-  initialMatrix = null,
-  onStateChange, audioSlots = null,
-  onSlotUpdate = null,
-  kbDisabled = false,
-  audioTransportSlot = null,
-}) {
+                             onEvent, sceneCfg = IDORU_SCENE_CONFIG,
+                             initialLinkedPairs = [false, false, false],
+                             initialMatrix = null,
+                             initialLeftMutes = null,
+                             onStateChange, audioSlots = null,
+                             onSlotUpdate = null,
+                             kbDisabled = false,
+                             audioTransportSlot = null,
+                           }) {
   const { leftBank, rightBank } = sceneCfg;
 
   // Indices of selected right-bank strips
@@ -833,12 +760,16 @@ export function IdoruScene({
   const [linkedPairs,   setLinkedPairs]   = useState(initialLinkedPairs);
   const [syncDbs,       setSyncDbs]       = useState(Array(7).fill(null));
   const [leftSyncDbs,   setLeftSyncDbs]   = useState(Array(7).fill(null));
-  const [leftSyncMutes, setLeftSyncMutes] = useState(Array(7).fill(null));
   const [rightSyncMutes,setRightSyncMutes]= useState(Array(7).fill(null));
   const [modSyncDb,     setModSyncDb]     = useState(null);
   const [matrix,        setMatrix]        = useState(() => initialMatrix ?? defaultMatrix());
-  const [modifierDb,    setModifierDb]    = useState(rightBank.modifier?.initialDb ?? 0);
-  const [leftMutes,     setLeftMutes]     = useState(Array(7).fill(false));
+  const [, setModifierDb]    = useState(rightBank.modifier?.initialDb ?? 0);
+  // manualMuteFlags: PURE user-toggled override per channel (7 slots).
+  // This is what gets persisted/exported. It does NOT by itself determine
+  // the displayed M state — see `displayedLeftMutes` below for that.
+  const [manualMuteFlags, setManualMuteFlags] = useState(() =>
+      (initialLeftMutes ?? Array(7).fill(false)).slice(0, 7)
+  );
 
   // Keyboard / wheel focus: { side: 'left'|'right', idx: 0-6 }
   const [kbFocus, setKbFocus] = useState(null);
@@ -849,7 +780,7 @@ export function IdoruScene({
   const rightDbsRef     = useRef(rightBank.channels.map(ch => ch.initialDb ?? 0));
   const modifierDbRef   = useRef(rightBank.modifier?.initialDb ?? 0);
   const matrixRef       = useRef(matrix);
-  const leftMutesRef    = useRef(Array(7).fill(false));
+  const manualMuteFlagsRef = useRef((initialLeftMutes ?? Array(7).fill(false)).slice(0, 7));
 
   useEffect(() => { matrixRef.current = matrix; }, [matrix]);
 
@@ -880,10 +811,43 @@ export function IdoruScene({
     return col;
   }, [selectedCols]);
 
-  // Connection count
+  // ── Displayed M indicator — PURE DERIVED VALUE ──────────────────
+  // Recomputed automatically whenever any input changes: audioSlots,
+  // matrix, primaryCol (selected output), or manualMuteFlags.
+  // Formula: !hasFile || level===0 || manualMuteFlag — hard blocks
+  // (no file / level=0) can never be overridden by the manual flag.
+  const displayedLeftMutes = useMemo(() => {
+    const col = primaryCol ?? 0;  // default to column 0 (HEADPHONE) when nothing selected
+    return Array.from({ length: 7 }, (_, i) => {
+      const hasFile = i === 6 ? true : !!(audioSlots?.[i]?.fileName);
+      if (!hasFile) return true;
+      const level = matrix[i]?.[col] ?? 0;
+      if (level === 0) return true;
+      return !!manualMuteFlags[i];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioSlots, matrix, primaryCol, manualMuteFlags]);
+
+  // Hard-blocked: MUTE is forced by missing file or zero level — the manual
+  // override toggle has no effect in this state, so the M button should be
+  // shown as disabled/locked rather than a clickable-but-ineffective control.
+  const leftMuteHardBlocked = useMemo(() => {
+    const col = primaryCol ?? 0;
+    return Array.from({ length: 7 }, (_, i) => {
+      const hasFile = i === 6 ? true : !!(audioSlots?.[i]?.fileName);
+      if (!hasFile) return true;
+      const level = matrix[i]?.[col] ?? 0;
+      return level === 0;
+    });
+  }, [audioSlots, matrix, primaryCol]);
+
+  useEffect(() => { manualMuteFlagsRef.current = manualMuteFlags; }, [manualMuteFlags]);
+
+  // Connection count — must mirror generateSongFile's mute formula exactly,
+  // since muted channels free up lines on the hardware (32-line hard limit)
   const connCount = useMemo(() =>
-    countConnections(matrix, audioSlots, linkedPairsRef.current, leftMutesRef.current),
-    [matrix, audioSlots, selectedRightIndices]
+          countConnections(matrix, audioSlots, linkedPairsRef.current, manualMuteFlags),
+      [matrix, audioSlots, selectedRightIndices, manualMuteFlags]
   );
 
   // ── State reporting ──────────────────────────────────────────
@@ -896,9 +860,9 @@ export function IdoruScene({
       linkedPairs: [...linkedPairsRef.current],
       modifierDb:  modifierDbRef.current,
       matrix:      matrixRef.current.map(r => [...r]),
-      leftMutes:   [...leftMutesRef.current],
+      leftMutes:   [...manualMuteFlagsRef.current],
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // mount only — intentionally no deps
 
   const reportState = useCallback(() => {
@@ -909,7 +873,7 @@ export function IdoruScene({
         linkedPairs:  [...linkedPairsRef.current],
         modifierDb:   modifierDbRef.current,
         matrix:       matrixRef.current.map(r => [...r]),
-        leftMutes:    [...leftMutesRef.current],
+        leftMutes:    [...manualMuteFlagsRef.current],
       });
     }, 200);
   }, [onStateChange]);
@@ -966,10 +930,14 @@ export function IdoruScene({
   }, [selectedCols, onEvent, reportState]);
 
   const handleMuteLeft = useCallback((e, inIdx) => {
-    leftMutesRef.current[inIdx] = e.muted;
-    setLeftMutes(prev => { const n = [...prev]; n[inIdx] = e.muted; return n; });
+    // Toggle the manual override flag. The DISPLAYED mute state is derived
+    // (see displayedLeftMutes) — hard blocks (no file / level=0) cannot be
+    // overridden by this flag, so syncMuted will snap the strip back if needed.
+    const next = !manualMuteFlagsRef.current[inIdx];
+    manualMuteFlagsRef.current[inIdx] = next;
+    setManualMuteFlags(prev => { const n = [...prev]; n[inIdx] = next; return n; });
     reportState();
-    onEvent?.(`${e.label}: ${e.muted ? "● MUTED" : "○ LIVE"}`);
+    onEvent?.(`${e.label}: manual mute ${next ? "ON" : "OFF"}`);
   }, [onEvent, reportState]);
 
   // ── Right bank: volume faders ─────────────────────────────────
@@ -1047,13 +1015,11 @@ export function IdoruScene({
 
   const muteFocused = useCallback((side, idx) => {
     if (side === "left") {
-      const n = !leftMutesRef.current[idx];
-      leftMutesRef.current[idx] = n;
-      setLeftMutes(prev => { const a = [...prev]; a[idx] = n; return a; });
-      // Push mute state to strip via syncMuted
-      setLeftSyncMutes(prev => { const a = [...prev]; a[idx] = n; return a; });
+      const n = !manualMuteFlagsRef.current[idx];
+      manualMuteFlagsRef.current[idx] = n;
+      setManualMuteFlags(prev => { const a = [...prev]; a[idx] = n; return a; });
       reportState();
-      onEvent?.(`${leftBank.channels[idx]?.label}: ${n ? "● MUTED" : "○ LIVE"}`);
+      onEvent?.(`${leftBank.channels[idx]?.label}: manual mute ${n ? "ON" : "OFF"}`);
     } else {
       const n = !rightFadersRef.current[idx]?.muted;
       rightFadersRef.current[idx] = { ...rightFadersRef.current[idx], muted: n };
@@ -1080,8 +1046,8 @@ export function IdoruScene({
           if (!prev) return { side: "left", idx: 0 };
           // flat: 0-6 = left, 7-13 = right 0-6, 14 = modifier
           let flat = prev.side === "left" ? prev.idx
-                   : prev.idx === 7       ? 14
-                                          : prev.idx + 7;
+              : prev.idx === 7       ? 14
+                  : prev.idx + 7;
           flat = Math.max(0, Math.min(TOTAL_STRIPS - 1, flat + dir));
           if (flat < 7)  return { side: "left",  idx: flat };
           if (flat === 14) return { side: "right", idx: 7 };   // modifier
@@ -1146,6 +1112,8 @@ export function IdoruScene({
       file:      result.file     ?? null,
       filePath:  result.filePath ?? null,
     };
+    // No manual mute-state bookkeeping needed here — displayedLeftMutes
+    // recomputes automatically once audioSlots updates (hasFile becomes true).
     onSlotUpdate?.(slotIdx, updated);
     if (updated.warnings.length > 0) {
       onEvent?.(`⚠ ${result.nameNoExt}: ${updated.warnings.join(" · ")}`);
@@ -1154,7 +1122,20 @@ export function IdoruScene({
     }
   }, [audioSlots, onSlotUpdate, onEvent]);
 
-  // ── Reset left bank strip (F1-F6 only) ───────────────────────
+  // ── Mono/Stereo toggle — click the M/S indicator on the strip ────
+  // Connections counter automatically recomputes via the existing
+  // connCount useMemo, since audioSlots is already in its dependency list.
+  const handleStereoToggle = useCallback((slotIdx) => {
+    const existing = audioSlots?.[slotIdx];
+    if (!existing) return;
+    const nextStereo = !existing.stereo;
+    // Must include fileName explicitly — App's handleSlotUpdate treats
+    // fileName == null (which includes undefined) as "clear this slot",
+    // so a partial { stereo } payload alone would wrongly delete the file.
+    onSlotUpdate?.(slotIdx, { fileName: existing.fileName, stereo: nextStereo });
+    onEvent?.(`F${slotIdx + 1}: switched to ${nextStereo ? "stereo" : "mono"}`);
+  }, [audioSlots, onSlotUpdate, onEvent]);
+
   const handleResetLeft = useCallback((slotIdx) => {
     // Zero all matrix columns for this input row
     setMatrix(prev => {
@@ -1162,10 +1143,11 @@ export function IdoruScene({
       for (let col = 0; col < 7; col++) m[slotIdx][col] = 0;
       return m;
     });
-    // Unmute
-    leftMutesRef.current[slotIdx] = false;
-    setLeftMutes(prev => { const n = [...prev]; n[slotIdx] = false; return n; });
-    setLeftSyncMutes(prev => { const n = [...prev]; n[slotIdx] = false; return n; });
+    // Clear manual override — per spec rule II, after reset the channel stays
+    // MUTE (no file) regardless of any subsequent manual unmute attempt, which
+    // displayedLeftMutes already guarantees since hasFile will be false.
+    manualMuteFlagsRef.current[slotIdx] = false;
+    setManualMuteFlags(prev => { const n = [...prev]; n[slotIdx] = false; return n; });
     // Reset fader to 0 (routing mode: 0 = no signal)
     setLeftSyncDbs(prev => { const n = [...prev]; n[slotIdx] = 0; return n; });
     // Reset slot metadata — empty file, default label, mono
@@ -1184,117 +1166,119 @@ export function IdoruScene({
   const rch = rightBank.channels;
 
   const rightStrip = (ch, i, extra = {}) => (
-    <ChannelStrip key={i}
-      label={ch.label} initialDb={ch.initialDb ?? 0} initialMuted={ch.initialMuted ?? false}
-      bank={rightBank.bankId}
-      isActive={selectedRightIndices.includes(i) || (kbFocus?.side === "right" && kbFocus.idx === i)}
-      onActivate={(e) => { handleRightActivate(i, e?.shiftKey); setKbFocus({ side: "right", idx: i }); }}
-      onFaderChange={(e) => handleFaderRight(e, i)}
-      onMuteChange={(e)  => handleMuteRight(e, i)}
-      syncDb={syncDbs[i]}
-      syncMuted={rightSyncMutes[i]}
-      showVu={false}
-      {...extra}
-    />
+      <ChannelStrip key={i}
+                    label={ch.label} initialDb={ch.initialDb ?? 0} initialMuted={ch.initialMuted ?? false}
+                    bank={rightBank.bankId}
+                    isActive={selectedRightIndices.includes(i) || (kbFocus?.side === "right" && kbFocus.idx === i)}
+                    onActivate={(e) => { handleRightActivate(i, e?.shiftKey); setKbFocus({ side: "right", idx: i }); }}
+                    onFaderChange={(e) => handleFaderRight(e, i)}
+                    onMuteChange={(e)  => handleMuteRight(e, i)}
+                    syncDb={syncDbs[i]}
+                    syncMuted={rightSyncMutes[i]}
+                    showVu={false}
+                    {...extra}
+      />
   );
 
   const isRoutingMode = selectedCols.length > 0;
 
   // Status bar text
   const statusText = isRoutingMode
-    ? `GAIN mode — routing to: ${selectedCols.map(c => COL_LABEL[c]).join(", ")} · shift+click or shift+space to multi-select`
-    : "VOLUME mode — click or focus+Space an output to start routing";
+      ? `GAIN mode — routing to: ${selectedCols.map(c => COL_LABEL[c]).join(", ")} · shift+click or shift+space to multi-select`
+      : "VOLUME mode — click or focus+Space an output to start routing";
 
   return (
-    <div className="idoru-scene" ref={sceneRef} tabIndex={0}
-      onFocus={() => {}} style={{ outline: "none" }}>
-      <div className="scene-status-bar">
+      <div className="idoru-scene" ref={sceneRef} tabIndex={0}
+           onFocus={() => {}} style={{ outline: "none" }}>
+        <div className="scene-status-bar">
         <span className={`scene-status-text${isRoutingMode ? " scene-status-text--active" : ""}`}>
           {isRoutingMode ? "▸ " : "○ "}{statusText}
         </span>
-        <ConnectionCounter count={connCount} />
-      </div>
-
-      <div className="idoru-body">
-        <div className="idoru-console">
-
-        {/* Left bank — GAIN / routing */}
-        <div className="bank bank--theme-left">
-          <div className="bank-header">
-            <span className="bank-number">{leftBank.bankId}</span>
-            <span className="bank-label">{leftBank.title}</span>
-            <span className="bank-fader-count">{leftBank.channels.length} ch</span>
-            <span className="bank-mode-badge">{isRoutingMode ? "GAIN" : "—"}</span>
-          </div>
-          <div className={`bank-strips${!isRoutingMode ? " bank-strips--dimmed" : ""}`}>
-            {leftBank.channels.map((ch, i) => (
-              <ChannelStrip
-                key={`left-${primaryCol ?? "idle"}-${i}`}
-                label={ch.label}
-                initialDb={primaryCol !== null ? (matrix[i]?.[primaryCol] ?? 0) : 0}
-                initialMuted={leftMutes[i]}
-                bank={leftBank.bankId}
-                isActive={kbFocus?.side === "left" && kbFocus.idx === i}
-                onActivate={() => setKbFocus({ side: "left", idx: i })}
-                cfg={isRoutingMode ? ROUTING_CFG : CONFIG}
-                showVu={false}
-                onFaderChange={(e) => handleFaderLeft(e, i)}
-                onMuteChange={(e)  => handleMuteLeft(e, i)}
-                stereoMode={leftStereoModes[i]}
-                onFilePick={i < 6 && onSlotUpdate ? () => handleLeftFilePick(i) : null}
-                onReset={i < 6 && onSlotUpdate ? () => handleResetLeft(i) : null}
-                syncDb={leftSyncDbs[i]}
-                syncMuted={leftSyncMutes[i]}
-                fileName={i < 6 ? (audioSlots?.[i]?.fileName || null) : null}
-                shortName={i < 6 ? (audioSlots?.[i]?.shortName || null) : null}
-              />
-            ))}
-          </div>
+          <ConnectionCounter count={connCount} />
         </div>
 
-        {/* Right bank — VOLUME */}
-        <div className="bank bank--theme-right">
-          <div className="bank-header">
-            <span className="bank-number">{rightBank.bankId}</span>
-            <span className="bank-label">{rightBank.title}</span>
-            <span className="bank-fader-count">{rch.length} ch{rightBank.modifier ? " + mod" : ""}</span>
-            <span className="bank-mode-badge bank-mode-badge--right">VOL</span>
-          </div>
-          <div className="bank-strips bank-strips--grouped">
-            {[0, 1, 2].map(pIdx => {
-              const aIdx = pIdx * 2, bIdx = aIdx + 1, linked = linkedPairs[pIdx];
-              return (
-                <div key={pIdx} className={`strip-pair${linked ? " strip-pair--linked" : ""}`}>
-                  {rightStrip(rch[aIdx], aIdx)}
-                  {rightStrip(rch[bIdx], bIdx, {
-                    showLinkBtn: true, linkActive: linked, onLinkToggle: () => togglePair(pIdx),
-                  })}
-                </div>
-              );
-            })}
-            <div className="strip-solo">{rightStrip(rch[6], 6)}</div>
-            {rightBank.modifier && (
-              <div className="strip-solo">
-                <ModifierStrip
-                  label={rightBank.modifier.label} initialDb={rightBank.modifier.initialDb ?? 0}
-                  bank={rightBank.bankId} cfg={CONFIG}
-                  isActive={kbFocus?.side === "right" && kbFocus.idx === 7}
-                  onActivate={() => setKbFocus({ side: "right", idx: 7 })}
-                  onValueChange={handleModifier}
-                  syncDb={modSyncDb}
-                />
+        <div className="idoru-body">
+          <div className="idoru-console">
+
+            {/* Left bank — GAIN / routing */}
+            <div className="bank bank--theme-left">
+              <div className="bank-header">
+                <span className="bank-number">{leftBank.bankId}</span>
+                <span className="bank-label">{leftBank.title}</span>
+                <span className="bank-fader-count">{leftBank.channels.length} ch</span>
+                <span className="bank-mode-badge">{isRoutingMode ? "GAIN" : "—"}</span>
               </div>
-            )}
+              <div className={`bank-strips${!isRoutingMode ? " bank-strips--dimmed" : ""}`}>
+                {leftBank.channels.map((ch, i) => (
+                    <ChannelStrip
+                        key={`left-${primaryCol ?? "idle"}-${i}`}
+                        label={ch.label}
+                        initialDb={primaryCol !== null ? (matrix[i]?.[primaryCol] ?? 0) : 0}
+                        initialMuted={displayedLeftMutes[i]}
+                        bank={leftBank.bankId}
+                        isActive={kbFocus?.side === "left" && kbFocus.idx === i}
+                        onActivate={() => setKbFocus({ side: "left", idx: i })}
+                        cfg={isRoutingMode ? ROUTING_CFG : CONFIG}
+                        showVu={false}
+                        onFaderChange={(e) => handleFaderLeft(e, i)}
+                        onMuteChange={(e)  => handleMuteLeft(e, i)}
+                        stereoMode={leftStereoModes[i]}
+                        onStereoToggle={i < 6 && onSlotUpdate ? () => handleStereoToggle(i) : null}
+                        onFilePick={i < 6 && onSlotUpdate ? () => handleLeftFilePick(i) : null}
+                        onReset={i < 6 && onSlotUpdate ? () => handleResetLeft(i) : null}
+                        syncDb={leftSyncDbs[i]}
+                        syncMuted={displayedLeftMutes[i]}
+                        muteHardBlocked={leftMuteHardBlocked[i]}
+                        fileName={i < 6 ? (audioSlots?.[i]?.fileName || null) : null}
+                        shortName={i < 6 ? (audioSlots?.[i]?.shortName || null) : null}
+                    />
+                ))}
+              </div>
+            </div>
+
+            {/* Right bank — VOLUME */}
+            <div className="bank bank--theme-right">
+              <div className="bank-header">
+                <span className="bank-number">{rightBank.bankId}</span>
+                <span className="bank-label">{rightBank.title}</span>
+                <span className="bank-fader-count">{rch.length} ch{rightBank.modifier ? " + mod" : ""}</span>
+                <span className="bank-mode-badge bank-mode-badge--right">VOL</span>
+              </div>
+              <div className="bank-strips bank-strips--grouped">
+                {[0, 1, 2].map(pIdx => {
+                  const aIdx = pIdx * 2, bIdx = aIdx + 1, linked = linkedPairs[pIdx];
+                  return (
+                      <div key={pIdx} className={`strip-pair${linked ? " strip-pair--linked" : ""}`}>
+                        {rightStrip(rch[aIdx], aIdx)}
+                        {rightStrip(rch[bIdx], bIdx, {
+                          showLinkBtn: true, linkActive: linked, onLinkToggle: () => togglePair(pIdx),
+                        })}
+                      </div>
+                  );
+                })}
+                <div className="strip-solo">{rightStrip(rch[6], 6)}</div>
+                {rightBank.modifier && (
+                    <div className="strip-solo">
+                      <ModifierStrip
+                          label={rightBank.modifier.label} initialDb={rightBank.modifier.initialDb ?? 0}
+                          bank={rightBank.bankId} cfg={CONFIG}
+                          isActive={kbFocus?.side === "right" && kbFocus.idx === 7}
+                          onActivate={() => setKbFocus({ side: "right", idx: 7 })}
+                          onValueChange={handleModifier}
+                          syncDb={modSyncDb}
+                      />
+                    </div>
+                )}
+              </div>
+            </div>
           </div>
+
+          {typeof audioTransportSlot === 'function'
+              ? audioTransportSlot(primaryCol)
+              : audioTransportSlot}
+          <RoutingTree matrix={matrix} audioSlots={audioSlots} linkedPairs={linkedPairs} selectedCols={selectedCols} />
         </div>
       </div>
-
-      {typeof audioTransportSlot === 'function'
-        ? audioTransportSlot(primaryCol)
-        : audioTransportSlot}
-      <RoutingTree matrix={matrix} audioSlots={audioSlots} linkedPairs={linkedPairs} selectedCols={selectedCols} />
-      </div>
-    </div>
   );
 }
 
@@ -1324,15 +1308,14 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
   const monitorGainRef = useRef(null); // GainNode between merger and destination
   const buffersRef  = useRef({});     // cacheKey → AudioBuffer
   const animRef     = useRef(null);
-  const scrubbing   = useRef(false);
 
   const slots      = song?.audioSlots ?? [];
   const hasFiles   = slots.some(sl => sl?.fileName);
   // Disabled when no song, no files, or no output selected
   const disabled   = !song || !hasFiles || selectedCol == null;
   const disabledMsg = !song || !hasFiles
-    ? null
-    : selectedCol == null ? 'Select an output to enable preview' : null;
+      ? null
+      : selectedCol == null ? 'Select an output to enable preview' : null;
 
   // Compute per-slot gains from current mixer state for a given column.
   // col: 0=PHONES, 1-6=OUT1-OUT6
@@ -1556,7 +1539,7 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
   useEffect(() => {
     if (monitorGainRef.current && ctxRef.current) {
       monitorGainRef.current.gain.setTargetAtTime(
-        monitorVol / 100, ctxRef.current.currentTime, 0.01
+          monitorVol / 100, ctxRef.current.currentTime, 0.01
       );
     }
   }, [monitorVol]);
@@ -1567,9 +1550,8 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
     if (prevColRef.current !== selectedCol) {
       prevColRef.current = selectedCol;
       if (sourcesRef.current.length) {
-        const pos = offsetRef.current + (ctxRef.current
-          ? ctxRef.current.currentTime - startTimeRef.current : 0);
-        offsetRef.current = pos;
+        offsetRef.current = offsetRef.current + (ctxRef.current
+            ? ctxRef.current.currentTime - startTimeRef.current : 0);
         stopPlayback();
         setPlaying(false);
       }
@@ -1597,8 +1579,7 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
 
   const handlePlay = async () => {
     if (playing) {
-      const pos = offsetRef.current + (ctxRef.current.currentTime - startTimeRef.current);
-      offsetRef.current = pos;
+      offsetRef.current = offsetRef.current + (ctxRef.current.currentTime - startTimeRef.current);
       stopPlayback();
       setPlaying(false);
       return;
@@ -1623,7 +1604,7 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
 
   const handleRewind = () => {
     const cur = offsetRef.current + (playing && ctxRef.current
-      ? ctxRef.current.currentTime - startTimeRef.current : 0);
+        ? ctxRef.current.currentTime - startTimeRef.current : 0);
     const next = Math.max(0, cur - 5);
     offsetRef.current = next;
     setPosition(next);
@@ -1632,7 +1613,7 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
 
   const handleFfw = () => {
     const cur = offsetRef.current + (playing && ctxRef.current
-      ? ctxRef.current.currentTime - startTimeRef.current : 0);
+        ? ctxRef.current.currentTime - startTimeRef.current : 0);
     const next = Math.min(duration - 0.1, cur + 5);
     offsetRef.current = next;
     setPosition(next);
@@ -1657,51 +1638,51 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
   const pct = duration > 0 ? (position / duration) * 100 : 0;
 
   return (
-    <div className={`audio-transport${disabled ? ' audio-transport--disabled' : ''}`}>
-      {(loadErr || loadMsg || disabledMsg) && (
-        <div className={`audio-transport-err${(loadMsg || disabledMsg) && !loadErr ? ' audio-transport-msg' : ''}`}>
-          {loadErr || disabledMsg || loadMsg}
-        </div>
-      )}
+      <div className={`audio-transport${disabled ? ' audio-transport--disabled' : ''}`}>
+        {(loadErr || loadMsg || disabledMsg) && (
+            <div className={`audio-transport-err${(loadMsg || disabledMsg) && !loadErr ? ' audio-transport-msg' : ''}`}>
+              {loadErr || disabledMsg || loadMsg}
+            </div>
+        )}
 
-      {/* Row 1: progress bar — always full width */}
-      <div className="at-progress-wrap" onClick={disabled ? undefined : handleScrub}>
-        <div className="at-progress-track">
-          <div className="at-progress-fill" style={{ width: `${pct}%` }} />
-          <div className="at-progress-handle" style={{ left: `${pct}%` }} />
+        {/* Row 1: progress bar — always full width */}
+        <div className="at-progress-wrap" onClick={disabled ? undefined : handleScrub}>
+          <div className="at-progress-track">
+            <div className="at-progress-fill" style={{ width: `${pct}%` }} />
+            <div className="at-progress-handle" style={{ left: `${pct}%` }} />
+          </div>
+          <div className="at-time-left">{fmtTime(position)}</div>
+          <div className="at-time-right">{fmtTime(duration)}</div>
         </div>
-        <div className="at-time-left">{fmtTime(position)}</div>
-        <div className="at-time-right">{fmtTime(duration)}</div>
+
+        {/* Row 2: transport buttons (left) + volume slider (right) */}
+        <div className="at-bottom-row">
+          <div className="at-controls">
+            <button className="at-btn" disabled={disabled}
+                    onMouseDown={handleRewind} title="Rewind 5s">⏮</button>
+            <button className="at-btn" disabled={disabled}
+                    onClick={handleStop} title="Stop">⏹</button>
+            <button className={`at-btn at-btn--play${playing ? ' at-btn--active' : ''}`}
+                    disabled={disabled || loading}
+                    onClick={handlePlay}
+                    title={playing ? 'Pause' : loading ? 'Loading…' : 'Play'}>
+              {loading ? '⟳' : playing ? '⏸' : '▶'}
+            </button>
+            <button className="at-btn" disabled={disabled}
+                    onMouseDown={handleFfw} title="Fast-forward 5s">⏭</button>
+          </div>
+
+          <div className="at-vol-wrap" title="Monitor volume (independent of routing)">
+            <span className="at-vol-icon">🔊</span>
+            <input
+                type="range" min="0" max="100" value={monitorVol}
+                className="at-vol-slider"
+                onChange={e => setMonitorVol(Number(e.target.value))}
+            />
+            <span className="at-vol-val">{monitorVol}%</span>
+          </div>
+        </div>
       </div>
-
-      {/* Row 2: transport buttons (left) + volume slider (right) */}
-      <div className="at-bottom-row">
-        <div className="at-controls">
-          <button className="at-btn" disabled={disabled}
-            onMouseDown={handleRewind} title="Rewind 5s">⏮</button>
-          <button className="at-btn" disabled={disabled}
-            onClick={handleStop} title="Stop">⏹</button>
-          <button className={`at-btn at-btn--play${playing ? ' at-btn--active' : ''}`}
-            disabled={disabled || loading}
-            onClick={handlePlay}
-            title={playing ? 'Pause' : loading ? 'Loading…' : 'Play'}>
-            {loading ? '⟳' : playing ? '⏸' : '▶'}
-          </button>
-          <button className="at-btn" disabled={disabled}
-            onMouseDown={handleFfw} title="Fast-forward 5s">⏭</button>
-        </div>
-
-        <div className="at-vol-wrap" title="Monitor volume (independent of routing)">
-          <span className="at-vol-icon">🔊</span>
-          <input
-            type="range" min="0" max="100" value={monitorVol}
-            className="at-vol-slider"
-            onChange={e => setMonitorVol(Number(e.target.value))}
-          />
-          <span className="at-vol-val">{monitorVol}%</span>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1712,95 +1693,95 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
 //  TOOLBAR
 // ═══════════════════════════════════════════════════════════════════
 function ToolBar({ onSave, onLoad, onTransfer, onSwitchView, viewMode, dirty,
-  onExport, onImport, onImportIdoru, onNewSession, onSavePreset, onScan, onFirmware,
-  theme, onToggleTheme }) {
+                   onExport, onImport, onImportIdoru, onNewSession, onSavePreset, onScan, onFirmware,
+                   theme, onToggleTheme }) {
   return (
-    <div className="toolbar">
+      <div className="toolbar">
       <span className="toolbar-logo">
         CIDORU <span className="toolbar-logo-version">v. {APP_VERSION}</span>
         <span className="toolbar-logo-sub">:: alternative app for Idoru P-1</span>
       </span>
-      <div className="toolbar-divider" />
+        <div className="toolbar-divider" />
 
-      {/* Session */}
-      <button className="toolbar-btn toolbar-btn--new" onClick={onNewSession} title="New session — resets all state">
-        <span className="toolbar-btn-icon">◻</span> NEW
-      </button>
-      <button className={`toolbar-btn${dirty ? " toolbar-btn--dirty" : ""}`} onClick={onSave}
-        title={dirty ? "Unsaved changes" : "Save session"}>
-        <span className="toolbar-btn-icon">▣</span> SAVE
-      </button>
-      <button className="toolbar-btn" onClick={onLoad} title="Reload from storage">
-        <span className="toolbar-btn-icon">▤</span> LOAD
-      </button>
-
-      <div className="toolbar-divider" />
-
-      {/* Import / Export */}
-      <button className="toolbar-btn" onClick={onExport} title="Export session as JSON file">
-        <span className="toolbar-btn-icon">↓</span> EXPORT
-      </button>
-      <button className="toolbar-btn" onClick={onImport} title="Import session from JSON file">
-        <span className="toolbar-btn-icon">↑</span> IMPORT
-      </button>
-      {onImportIdoru && (
-        <button className="toolbar-btn" onClick={onImportIdoru} title="Import from original Idoru .idoru session file">
-          <span className="toolbar-btn-icon">↑</span> .IDORU
+        {/* Session */}
+        <button className="toolbar-btn toolbar-btn--new" onClick={onNewSession} title="New session — resets all state">
+          <span className="toolbar-btn-icon">◻</span> NEW
         </button>
-      )}
+        <button className={`toolbar-btn${dirty ? " toolbar-btn--dirty" : ""}`} onClick={onSave}
+                title={dirty ? "Unsaved changes" : "Save session"}>
+          <span className="toolbar-btn-icon">▣</span> SAVE
+        </button>
+        <button className="toolbar-btn" onClick={onLoad} title="Reload from storage">
+          <span className="toolbar-btn-icon">▤</span> LOAD
+        </button>
 
-      <div className="toolbar-divider" />
+        <div className="toolbar-divider" />
 
-      {/* Preset + Scan */}
-      <button className="toolbar-btn toolbar-btn--preset" onClick={onSavePreset}
-        title="Save current mixer state as a reusable preset">
-        <span className="toolbar-btn-icon">★</span> PRESET
-      </button>
-      <button className="toolbar-btn" onClick={onScan} title="Scan for missing audio files">
-        <span className="toolbar-btn-icon">⌕</span> SCAN
-      </button>
+        {/* Import / Export */}
+        <button className="toolbar-btn" onClick={onExport} title="Export session as JSON file">
+          <span className="toolbar-btn-icon">↓</span> EXPORT
+        </button>
+        <button className="toolbar-btn" onClick={onImport} title="Import session from JSON file">
+          <span className="toolbar-btn-icon">↑</span> IMPORT
+        </button>
+        {onImportIdoru && (
+            <button className="toolbar-btn" onClick={onImportIdoru} title="Import from original Idoru .idoru session file">
+              <span className="toolbar-btn-icon">↑</span> .IDORU
+            </button>
+        )}
 
-      <div className="toolbar-divider" />
+        <div className="toolbar-divider" />
 
-      {/* SD card */}
-      <button className="toolbar-btn toolbar-btn--transfer" onClick={onTransfer}
-        title="Write P-1 config files and audio to SD card">
-        <span className="toolbar-btn-icon">⏏</span> TRANSFER
-      </button>
-      <button className="toolbar-btn toolbar-btn--firmware" onClick={onFirmware}
-        title="Check for firmware updates at idoru.live">
-        <span className="toolbar-btn-icon">⬆</span> FIRMWARE
-      </button>
+        {/* Preset + Scan */}
+        <button className="toolbar-btn toolbar-btn--preset" onClick={onSavePreset}
+                title="Save current mixer state as a reusable preset">
+          <span className="toolbar-btn-icon">★</span> PRESET
+        </button>
+        <button className="toolbar-btn" onClick={onScan} title="Scan for missing audio files">
+          <span className="toolbar-btn-icon">⌕</span> SCAN
+        </button>
 
-      <div className="toolbar-divider" />
+        <div className="toolbar-divider" />
 
-      {/* View */}
-      <button className={`toolbar-btn${viewMode === "matrix" ? " toolbar-btn--view-active" : ""}`}
-        onClick={onSwitchView} title="Switch fader / matrix view">
-        <span className="toolbar-btn-icon">{viewMode === "classic" ? "⊞" : "⊟"}</span>
-        {viewMode === "classic" ? "MATRIX" : "FADERS"}
-      </button>
+        {/* SD card */}
+        <button className="toolbar-btn toolbar-btn--transfer" onClick={onTransfer}
+                title="Write P-1 config files and audio to SD card">
+          <span className="toolbar-btn-icon">⏏</span> TRANSFER
+        </button>
+        <button className="toolbar-btn toolbar-btn--firmware" onClick={onFirmware}
+                title="Check for firmware updates at idoru.live">
+          <span className="toolbar-btn-icon">⬆</span> FIRMWARE
+        </button>
 
-      <div className="toolbar-spacer" />
+        <div className="toolbar-divider" />
 
-      {/* Theme toggle */}
-      <button className={`toolbar-btn toolbar-btn--theme${theme === "light" ? " toolbar-btn--theme-light" : ""}`}
-        onClick={onToggleTheme}
-        title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}>
-        <span className="toolbar-btn-icon">{theme === "light" ? "☾" : "☀"}</span>
-        {theme === "light" ? "DARK" : "LIGHT"}
-      </button>
+        {/* View */}
+        <button className={`toolbar-btn${viewMode === "matrix" ? " toolbar-btn--view-active" : ""}`}
+                onClick={onSwitchView} title="Switch fader / matrix view">
+          <span className="toolbar-btn-icon">{viewMode === "classic" ? "⊞" : "⊟"}</span>
+          {viewMode === "classic" ? "MATRIX" : "FADERS"}
+        </button>
 
-      {/* Manual — always on the far right */}
-      <button className="toolbar-btn toolbar-btn--manual"
-        onClick={() => {
-          if (window.electronAPI?.openManual) window.electronAPI.openManual();
-          else window.open('/MANUAL.html', '_blank');
-        }}
-        title="Open user manual">
-        <span className="toolbar-btn-icon">?</span> MANUAL
-      </button>
-    </div>
+        <div className="toolbar-spacer" />
+
+        {/* Theme toggle */}
+        <button className={`toolbar-btn toolbar-btn--theme${theme === "light" ? " toolbar-btn--theme-light" : ""}`}
+                onClick={onToggleTheme}
+                title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}>
+          <span className="toolbar-btn-icon">{theme === "light" ? "☾" : "☀"}</span>
+          {theme === "light" ? "DARK" : "LIGHT"}
+        </button>
+
+        {/* Manual — always on the far right */}
+        <button className="toolbar-btn toolbar-btn--manual"
+                onClick={() => {
+                  if (window.electronAPI?.openManual) window.electronAPI.openManual();
+                  else window.open('/MANUAL.html', '_blank');
+                }}
+                title="Open user manual">
+          <span className="toolbar-btn-icon">?</span> MANUAL
+        </button>
+      </div>
   );
 }
 
@@ -1809,30 +1790,30 @@ function ToolBar({ onSave, onLoad, onTransfer, onSwitchView, viewMode, dirty,
 // ═══════════════════════════════════════════════════════════════════
 function PlaylistPane({ playlists, selectedId, onSelect, onAdd, onEdit, onDelete, onDuplicate, onMoveUp, onMoveDown }) {
   return (
-    <div className="pane playlist-pane">
-      <div className="pane-header">
-        <span className="pane-title">Playlists</span>
-        <span className="pane-subtitle">{playlists.length}/7</span>
-        <button className="pane-add-btn" onClick={onAdd} disabled={playlists.length >= 7} title="New playlist (max 7)">+</button>
+      <div className="pane playlist-pane">
+        <div className="pane-header">
+          <span className="pane-title">Playlists</span>
+          <span className="pane-subtitle">{playlists.length}/7</span>
+          <button className="pane-add-btn" onClick={onAdd} disabled={playlists.length >= 7} title="New playlist (max 7)">+</button>
+        </div>
+        <div className="pane-list">
+          {playlists.length === 0 && <div className="pane-empty">No playlists yet</div>}
+          {playlists.map((pl, idx) => (
+              <div key={pl.id} className={`pane-item${selectedId === pl.id ? " pane-item--selected" : ""}`}
+                   onClick={() => onSelect(pl.id)}>
+                <span className="pane-item-index">{idx + 1}</span>
+                <span className="pane-item-name">{pl.name}</span>
+                <div className="pane-item-actions">
+                  <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onMoveUp(idx); }} disabled={idx === 0} title="Move up">↑</button>
+                  <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onMoveDown(idx); }} disabled={idx === playlists.length - 1} title="Move down">↓</button>
+                  <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onEdit(pl); }} title="Edit">✎</button>
+                  <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onDuplicate(pl.id); }} title="Duplicate">⧉</button>
+                  <button className="pane-action-btn pane-action-btn--delete" onClick={e => { e.stopPropagation(); onDelete(pl.id); }} title="Delete">✕</button>
+                </div>
+              </div>
+          ))}
+        </div>
       </div>
-      <div className="pane-list">
-        {playlists.length === 0 && <div className="pane-empty">No playlists yet</div>}
-        {playlists.map((pl, idx) => (
-          <div key={pl.id} className={`pane-item${selectedId === pl.id ? " pane-item--selected" : ""}`}
-            onClick={() => onSelect(pl.id)}>
-            <span className="pane-item-index">{idx + 1}</span>
-            <span className="pane-item-name">{pl.name}</span>
-            <div className="pane-item-actions">
-              <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onMoveUp(idx); }} disabled={idx === 0} title="Move up">↑</button>
-              <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onMoveDown(idx); }} disabled={idx === playlists.length - 1} title="Move down">↓</button>
-              <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onEdit(pl); }} title="Edit">✎</button>
-              <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onDuplicate(pl.id); }} title="Duplicate">⧉</button>
-              <button className="pane-action-btn pane-action-btn--delete" onClick={e => { e.stopPropagation(); onDelete(pl.id); }} title="Delete">✕</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -1840,37 +1821,37 @@ const QUEUE_LABELS = { queue_next: "Queue", play_next: "Next", loop: "Loop" };
 
 function SongsPane({ songs, selectedId, disabled, onSelect, onAdd, onEdit, onDelete, onDuplicate, onMoveUp, onMoveDown }) {
   return (
-    <div className={`pane songs-pane${disabled ? " pane--disabled" : ""}`}>
-      <div className="pane-header">
-        <span className="pane-title">Songs</span>
-        <span className="pane-subtitle">{songs.length}/40</span>
-        <button className="pane-add-btn" onClick={onAdd} disabled={disabled || songs.length >= 40} title="New song (max 40 per playlist)">+</button>
-      </div>
-      <div className="pane-list">
-        {disabled  && <div className="pane-empty">← Select a playlist</div>}
-        {!disabled && songs.length === 0 && <div className="pane-empty">No songs yet</div>}
-        {songs.map((s, idx) => (
-          <div key={s.id} className={`pane-item${selectedId === s.id ? " pane-item--selected" : ""}`}
-            onClick={() => onSelect(s.id)}>
-            <span className="pane-item-index">{idx + 1}</span>
-            <div className="pane-item-body">
-              <span className="pane-item-name">{s.name}</span>
-              <span className="pane-item-meta">
+      <div className={`pane songs-pane${disabled ? " pane--disabled" : ""}`}>
+        <div className="pane-header">
+          <span className="pane-title">Songs</span>
+          <span className="pane-subtitle">{songs.length}/40</span>
+          <button className="pane-add-btn" onClick={onAdd} disabled={disabled || songs.length >= 40} title="New song (max 40 per playlist)">+</button>
+        </div>
+        <div className="pane-list">
+          {disabled  && <div className="pane-empty">← Select a playlist</div>}
+          {!disabled && songs.length === 0 && <div className="pane-empty">No songs yet</div>}
+          {songs.map((s, idx) => (
+              <div key={s.id} className={`pane-item${selectedId === s.id ? " pane-item--selected" : ""}`}
+                   onClick={() => onSelect(s.id)}>
+                <span className="pane-item-index">{idx + 1}</span>
+                <div className="pane-item-body">
+                  <span className="pane-item-name">{s.name}</span>
+                  <span className="pane-item-meta">
                 {s.bpm} BPM · {QUEUE_LABELS[s.queueBehavior] ?? s.queueBehavior}
-                {s.midiFile ? " · MIDI" : ""}
+                    {s.midiFile ? " · MIDI" : ""}
               </span>
-            </div>
-            <div className="pane-item-actions">
-              <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onMoveUp(idx); }} disabled={idx === 0} title="Move up">↑</button>
-              <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onMoveDown(idx); }} disabled={idx === songs.length - 1} title="Move down">↓</button>
-              <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onEdit(s); }} title="Edit">✎</button>
-              <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onDuplicate(s.id); }} title="Duplicate">⧉</button>
-              <button className="pane-action-btn pane-action-btn--delete" onClick={e => { e.stopPropagation(); onDelete(s.id); }} title="Delete">✕</button>
-            </div>
-          </div>
-        ))}
+                </div>
+                <div className="pane-item-actions">
+                  <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onMoveUp(idx); }} disabled={idx === 0} title="Move up">↑</button>
+                  <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onMoveDown(idx); }} disabled={idx === songs.length - 1} title="Move down">↓</button>
+                  <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onEdit(s); }} title="Edit">✎</button>
+                  <button className="pane-action-btn" onClick={e => { e.stopPropagation(); onDuplicate(s.id); }} title="Duplicate">⧉</button>
+                  <button className="pane-action-btn pane-action-btn--delete" onClick={e => { e.stopPropagation(); onDelete(s.id); }} title="Delete">✕</button>
+                </div>
+              </div>
+          ))}
+        </div>
       </div>
-    </div>
   );
 }
 
@@ -1894,22 +1875,22 @@ function HelpPane({ context, viewMode }) {
   }, [context, viewMode]);
 
   return (
-    <div className="pane help-pane">
-      <div className="pane-header"><span className="pane-title">Help</span></div>
-      <div className="help-content">
-        <div className="help-section-title">{content.title}</div>
-        {content.lines.map((line, i) => <div key={i} className="help-line">{line || <>&nbsp;</>}</div>)}
+      <div className="pane help-pane">
+        <div className="pane-header"><span className="pane-title">Help</span></div>
+        <div className="help-content">
+          <div className="help-section-title">{content.title}</div>
+          {content.lines.map((line, i) => <div key={i} className="help-line">{line || <>&nbsp;</>}</div>)}
+        </div>
       </div>
-    </div>
   );
 }
 
 function InfoBar({ message }) {
   return (
-    <div className={`info-bar${message ? ` info-bar--${message.type}` : ""}`}>
-      <span className="info-bar-dot">●</span>
-      <span className="info-bar-text">{message ? message.text : "Ready"}</span>
-    </div>
+      <div className={`info-bar${message ? ` info-bar--${message.type}` : ""}`}>
+        <span className="info-bar-dot">●</span>
+        <span className="info-bar-text">{message ? message.text : "Ready"}</span>
+      </div>
   );
 }
 
@@ -1918,21 +1899,21 @@ function InfoBar({ message }) {
 // ═══════════════════════════════════════════════════════════════════
 function ConfirmModal({ title, message, confirmLabel = "Confirm", danger = false, onConfirm, onCancel }) {
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>{title}</span>
-          <button className="modal-close" onClick={onCancel}>✕</button>
-        </div>
-        <div className="modal-body">
-          <div className="confirm-message">{message}</div>
-        </div>
-        <div className="modal-footer">
-          <button className="modal-btn" onClick={onCancel}>Cancel</button>
-          <button className={`modal-btn${danger ? " modal-btn--danger" : " modal-btn--primary"}`} onClick={onConfirm}>{confirmLabel}</button>
+      <div className="modal-overlay" onClick={onCancel}>
+        <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>{title}</span>
+            <button className="modal-close" onClick={onCancel}>✕</button>
+          </div>
+          <div className="modal-body">
+            <div className="confirm-message">{message}</div>
+          </div>
+          <div className="modal-footer">
+            <button className="modal-btn" onClick={onCancel}>Cancel</button>
+            <button className={`modal-btn${danger ? " modal-btn--danger" : " modal-btn--primary"}`} onClick={onConfirm}>{confirmLabel}</button>
+          </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -1950,40 +1931,40 @@ function SavePresetModal({ onSave, onCancel }) {
   const canSave   = nameVal.valid;
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>Save as Preset</span>
-          <button className="modal-close" onClick={onCancel}>✕</button>
-        </div>
-        <div className="modal-body">
-          <div className="form-row">
-            <label className="form-label">Name</label>
-            <div className="form-field-wrap">
-              <input ref={ref} className={`form-input${!nameVal.valid && name.length > 0 ? " form-input--error" : ""}`}
-                value={name} maxLength={32} onChange={e => setName(filterP1(e.target.value))}
-                placeholder="My routing preset" />
-              <div className="form-char-count">{name.length}/32</div>
+      <div className="modal-overlay" onClick={onCancel}>
+        <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>Save as Preset</span>
+            <button className="modal-close" onClick={onCancel}>✕</button>
+          </div>
+          <div className="modal-body">
+            <div className="form-row">
+              <label className="form-label">Name</label>
+              <div className="form-field-wrap">
+                <input ref={ref} className={`form-input${!nameVal.valid && name.length > 0 ? " form-input--error" : ""}`}
+                       value={name} maxLength={32} onChange={e => setName(filterP1(e.target.value))}
+                       placeholder="My routing preset" />
+                <div className="form-char-count">{name.length}/32</div>
+              </div>
+            </div>
+            {!nameVal.valid && name.length > 0 && <div className="form-error">{nameVal.error}</div>}
+            <div className="form-row">
+              <label className="form-label">Comment</label>
+              <textarea className="form-input form-textarea" value={comment} maxLength={200}
+                        onChange={e => setComment(e.target.value)}
+                        placeholder="Optional notes about this preset…" />
+            </div>
+            <div className="form-allowed-chars">
+              Presets capture: routing matrix · fader levels · mute states · stereo links.<br/>
+              Audio file assignments and song metadata are NOT stored.
             </div>
           </div>
-          {!nameVal.valid && name.length > 0 && <div className="form-error">{nameVal.error}</div>}
-          <div className="form-row">
-            <label className="form-label">Comment</label>
-            <textarea className="form-input form-textarea" value={comment} maxLength={200}
-              onChange={e => setComment(e.target.value)}
-              placeholder="Optional notes about this preset…" />
+          <div className="modal-footer">
+            <button className="modal-btn" onClick={onCancel}>Cancel</button>
+            <button className="modal-btn modal-btn--primary" onClick={() => onSave({ name, comment })} disabled={!canSave}>Save Preset</button>
           </div>
-          <div className="form-allowed-chars">
-            Presets capture: routing matrix · fader levels · mute states · stereo links.<br/>
-            Audio file assignments and song metadata are NOT stored.
-          </div>
-        </div>
-        <div className="modal-footer">
-          <button className="modal-btn" onClick={onCancel}>Cancel</button>
-          <button className="modal-btn modal-btn--primary" onClick={() => onSave({ name, comment })} disabled={!canSave}>Save Preset</button>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -2002,42 +1983,42 @@ function TransferModal({ lines, done, result, onClose }) {
   const hasErrors  = result?.missing?.length > 0 || result?.aborted;
   const statusIcon = !done ? "⏳" : hasErrors ? "⚠" : "✓";
   const statusText = !done
-    ? "Transferring…"
-    : result?.aborted
-      ? `Aborted — ${result.missing?.length ?? 0} file(s) missing. Use Scan & Relink first.`
-      : result?.missing?.length > 0
-        ? `Done with warnings — ${result.missing.length} file(s) not copied.`
-        : `Transfer complete. ${result?.copied ?? 0} file(s) copied, ${result?.skipped ?? 0} unchanged.`;
+      ? "Transferring…"
+      : result?.aborted
+          ? `Aborted — ${result.missing?.length ?? 0} file(s) missing. Use Scan & Relink first.`
+          : result?.missing?.length > 0
+              ? `Done with warnings — ${result.missing.length} file(s) not copied.`
+              : `Transfer complete. ${result?.copied ?? 0} file(s) copied, ${result?.skipped ?? 0} unchanged.`;
 
   return (
-    <div className="modal-overlay" onClick={done ? onClose : undefined}>
-      <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>SD Card Transfer</span>
-          {done && <button className="modal-close" onClick={onClose}>✕</button>}
-        </div>
-        <div className="modal-body">
-          <div className={`transfer-status${!done ? " transfer-status--busy" : hasErrors ? " transfer-status--warn" : " transfer-status--ok"}`}>
-            <span className="transfer-status-icon">{statusIcon}</span>
-            <span>{statusText}</span>
+      <div className="modal-overlay" onClick={done ? onClose : undefined}>
+        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>SD Card Transfer</span>
+            {done && <button className="modal-close" onClick={onClose}>✕</button>}
           </div>
-          <div className="transfer-log" ref={logRef}>
-            {lines.map((line, i) => (
-              <div key={i} className={`transfer-log-line${line.startsWith("  ⚠") || line.startsWith("⛔") ? " transfer-log-line--warn" : line.startsWith("  ✓") || line.startsWith("✓") ? " transfer-log-line--ok" : line.startsWith("🗑") || line.startsWith("  🗑") ? " transfer-log-line--del" : ""}`}>
-                {line}
-              </div>
-            ))}
-            {!done && <div className="transfer-log-cursor">▌</div>}
+          <div className="modal-body">
+            <div className={`transfer-status${!done ? " transfer-status--busy" : hasErrors ? " transfer-status--warn" : " transfer-status--ok"}`}>
+              <span className="transfer-status-icon">{statusIcon}</span>
+              <span>{statusText}</span>
+            </div>
+            <div className="transfer-log" ref={logRef}>
+              {lines.map((line, i) => (
+                  <div key={i} className={`transfer-log-line${line.startsWith("  ⚠") || line.startsWith("⛔") ? " transfer-log-line--warn" : line.startsWith("  ✓") || line.startsWith("✓") ? " transfer-log-line--ok" : line.startsWith("🗑") || line.startsWith("  🗑") ? " transfer-log-line--del" : ""}`}>
+                    {line}
+                  </div>
+              ))}
+              {!done && <div className="transfer-log-cursor">▌</div>}
+            </div>
           </div>
-        </div>
-        <div className="modal-footer">
-          {done
-            ? <button className="modal-btn modal-btn--primary" onClick={onClose}>Close</button>
-            : <span className="transfer-wait-note">Please wait — do not close the application.</span>
-          }
+          <div className="modal-footer">
+            {done
+                ? <button className="modal-btn modal-btn--primary" onClick={onClose}>Close</button>
+                : <span className="transfer-wait-note">Please wait — do not close the application.</span>
+            }
+          </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -2050,74 +2031,74 @@ function ScanModal({ results, onRelink, onScanFolder, onClose }) {
   const fileLabel = (r) => r.slotIdx < 0 ? `${r.fileName}.mid` : `${r.fileName}.wav`;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>Scan Results — {missing.length} missing · {unverified.length} unverified · {ok.length} ok</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body">
-          {missing.length === 0 && unverified.length === 0 && (
-            <div className="scan-ok">✓ All {ok.length} assigned file(s) verified on disk.</div>
-          )}
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>Scan Results — {missing.length} missing · {unverified.length} unverified · {ok.length} ok</span>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+          <div className="modal-body">
+            {missing.length === 0 && unverified.length === 0 && (
+                <div className="scan-ok">✓ All {ok.length} assigned file(s) verified on disk.</div>
+            )}
 
-          {missing.length > 0 && (
-            <>
-              <div className="scan-warning">
-                ⚠ {missing.length} file(s) confirmed missing from disk. Use <strong>Relink</strong> to reassign.
-              </div>
-              <div className="scan-list">
-                {missing.map((r, i) => (
-                  <div key={i} className="scan-item scan-item--missing">
-                    <div className="scan-item-info">
-                      <span className="scan-item-song">{r.songName}</span>
-                      <span className="scan-item-slot">{slotLabel(r)}</span>
-                      <span className="scan-item-file">{fileLabel(r)}</span>
-                    </div>
-                    <button className="scan-relink-btn" onClick={() => onRelink(r)}>Relink</button>
+            {missing.length > 0 && (
+                <>
+                  <div className="scan-warning">
+                    ⚠ {missing.length} file(s) confirmed missing from disk. Use <strong>Relink</strong> to reassign.
                   </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {unverified.length > 0 && (
-            <>
-              <div className="scan-warning" style={{marginTop: missing.length > 0 ? 12 : 0}}>
-                ⚠ {unverified.length} file(s) not yet picked in this session — their paths are not in memory.
-                Use <strong>Relink</strong> to pick each file, or open each song and use the <strong>↑ WAV</strong> button.
-                These files will not be copied during Transfer until picked.
-              </div>
-              <div className="scan-list">
-                {unverified.map((r, i) => (
-                  <div key={i} className="scan-item scan-item--missing">
-                    <div className="scan-item-info">
-                      <span className="scan-item-song">{r.songName}</span>
-                      <span className="scan-item-slot">{slotLabel(r)}</span>
-                      <span className="scan-item-file">{fileLabel(r)}</span>
-                    </div>
-                    <button className="scan-relink-btn" onClick={() => onRelink(r)}>Pick</button>
+                  <div className="scan-list">
+                    {missing.map((r, i) => (
+                        <div key={i} className="scan-item scan-item--missing">
+                          <div className="scan-item-info">
+                            <span className="scan-item-song">{r.songName}</span>
+                            <span className="scan-item-slot">{slotLabel(r)}</span>
+                            <span className="scan-item-file">{fileLabel(r)}</span>
+                          </div>
+                          <button className="scan-relink-btn" onClick={() => onRelink(r)}>Relink</button>
+                        </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </>
-          )}
+                </>
+            )}
 
-          {ok.length > 0 && (missing.length > 0 || unverified.length > 0) && (
-            <div className="scan-ok-list">{ok.length} file(s) verified ok.</div>
-          )}
-        </div>
-        <div className="modal-footer">
-          {onScanFolder && (missing.length > 0 || unverified.length > 0) && (
-            <button className="modal-btn" onClick={onScanFolder}
-              title="Recursively scan a folder and auto-link files by filename">
-              ⌕ Choose Folder
-            </button>
-          )}
-          <button className="modal-btn modal-btn--primary" onClick={onClose}>Close</button>
+            {unverified.length > 0 && (
+                <>
+                  <div className="scan-warning" style={{marginTop: missing.length > 0 ? 12 : 0}}>
+                    ⚠ {unverified.length} file(s) not yet picked in this session — their paths are not in memory.
+                    Use <strong>Relink</strong> to pick each file, or open each song and use the <strong>↑ WAV</strong> button.
+                    These files will not be copied during Transfer until picked.
+                  </div>
+                  <div className="scan-list">
+                    {unverified.map((r, i) => (
+                        <div key={i} className="scan-item scan-item--missing">
+                          <div className="scan-item-info">
+                            <span className="scan-item-song">{r.songName}</span>
+                            <span className="scan-item-slot">{slotLabel(r)}</span>
+                            <span className="scan-item-file">{fileLabel(r)}</span>
+                          </div>
+                          <button className="scan-relink-btn" onClick={() => onRelink(r)}>Pick</button>
+                        </div>
+                    ))}
+                  </div>
+                </>
+            )}
+
+            {ok.length > 0 && (missing.length > 0 || unverified.length > 0) && (
+                <div className="scan-ok-list">{ok.length} file(s) verified ok.</div>
+            )}
+          </div>
+          <div className="modal-footer">
+            {onScanFolder && (missing.length > 0 || unverified.length > 0) && (
+                <button className="modal-btn" onClick={onScanFolder}
+                        title="Recursively scan a folder and auto-link files by filename">
+                  ⌕ Choose Folder
+                </button>
+            )}
+            <button className="modal-btn modal-btn--primary" onClick={onClose}>Close</button>
+          </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -2195,159 +2176,159 @@ function FirmwareModal({ onClose }) {
   // For SD path picking we use the transfer dialog approach
   // ── Web version: static instructions ─────────────────────────────
   if (!isElectron) return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>Firmware Update</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body">
-          <div className="firmware-note">
-            Browser security prevents direct download from idoru.live.<br/>
-            Follow these steps manually:
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>Firmware Update</span>
+            <button className="modal-close" onClick={onClose}>✕</button>
           </div>
-          <ol className="firmware-steps">
-            <li>Visit <a href="https://idoru.live/downloads" target="_blank" rel="noreferrer" className="firmware-link">idoru.live/downloads</a> and download the latest <code>.bin</code> firmware file.</li>
-            <li>Make sure your SD card has at least one setlist and song.</li>
-            <li>Create a folder called <code>update</code> on the root of the SD card.</li>
-            <li>Place the <code>.bin</code> file into the <code>update</code> folder (no other files).</li>
-            <li>With the pedal <strong>off</strong>, insert the SD card.</li>
-            <li>Hold the <strong>Play</strong> footswitch and connect power. Keep holding until the firmware message appears.</li>
-            <li>Release footswitch, then unplug and replug to restart.</li>
-          </ol>
-          <div className="firmware-note" style={{marginTop:12}}>
-            💡 The desktop version of CIdoru can auto-download firmware and write it to the SD card for you.
+          <div className="modal-body">
+            <div className="firmware-note">
+              Browser security prevents direct download from idoru.live.<br/>
+              Follow these steps manually:
+            </div>
+            <ol className="firmware-steps">
+              <li>Visit <a href="https://idoru.live/downloads" target="_blank" rel="noreferrer" className="firmware-link">idoru.live/downloads</a> and download the latest <code>.bin</code> firmware file.</li>
+              <li>Make sure your SD card has at least one setlist and song.</li>
+              <li>Create a folder called <code>update</code> on the root of the SD card.</li>
+              <li>Place the <code>.bin</code> file into the <code>update</code> folder (no other files).</li>
+              <li>With the pedal <strong>off</strong>, insert the SD card.</li>
+              <li>Hold the <strong>Play</strong> footswitch and connect power. Keep holding until the firmware message appears.</li>
+              <li>Release footswitch, then unplug and replug to restart.</li>
+            </ol>
+            <div className="firmware-note" style={{marginTop:12}}>
+              💡 The desktop version of CIdoru can auto-download firmware and write it to the SD card for you.
+            </div>
           </div>
-        </div>
-        <div className="modal-footer">
-          <a href="https://idoru.live/downloads" target="_blank" rel="noreferrer"
-            className="modal-btn modal-btn--primary firmware-open-btn">Open idoru.live/downloads</a>
-          <button className="modal-btn" onClick={onClose}>Close</button>
+          <div className="modal-footer">
+            <a href="https://idoru.live/downloads" target="_blank" rel="noreferrer"
+               className="modal-btn modal-btn--primary firmware-open-btn">Open idoru.live/downloads</a>
+            <button className="modal-btn" onClick={onClose}>Close</button>
+          </div>
         </div>
       </div>
-    </div>
   );
 
   // ── Electron version: smart firmware manager ──────────────────────
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>Firmware Manager</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body">
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>Firmware Manager</span>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+          <div className="modal-body">
 
-          {/* Cached firmware status */}
-          <div className="firmware-status-box">
-            {cached
-              ? <><span className="firmware-status-dot firmware-status-dot--ok">●</span>
-                  <span>Firmware <strong>v{cached.version}</strong> ready
-                  {cached.manual ? " (manually added)" : " (downloaded)"}
+            {/* Cached firmware status */}
+            <div className="firmware-status-box">
+              {cached
+                  ? <><span className="firmware-status-dot firmware-status-dot--ok">●</span>
+                    <span>Firmware <strong>v{cached.version}</strong> ready
+                      {cached.manual ? " (manually added)" : " (downloaded)"}
                   </span>
-                  <button className="modal-btn firmware-clear-btn" onClick={handleClearCache}>✕ Clear</button>
-                </>
-              : <><span className="firmware-status-dot firmware-status-dot--none">○</span>
-                  <span>No firmware cached</span>
-                </>
-            }
-          </div>
-
-          {/* Step 1: Get firmware */}
-          <div className="firmware-section-title">Step 1 — Get firmware</div>
-          <div className="firmware-btn-row">
-            <button className="modal-btn modal-btn--primary" onClick={handleCheck}
-              disabled={phase === "checking" || phase === "downloading"}>
-              {phase === "checking" ? "Checking…" : "⌕ Check for latest on idoru.live"}
-            </button>
-            <button className="modal-btn" onClick={handlePickManual}
-              disabled={phase === "downloading"}>
-              ↑ Pick .bin from disk
-            </button>
-            <button className="modal-btn" onClick={handleOpenPage}>
-              ↗ Open idoru.live/downloads
-            </button>
-          </div>
-
-          {phase === "found" && firmwares.length > 0 && (
-            <div className="firmware-found-list">
-              {firmwares.map((fw, i) => (
-                <div key={i} className="firmware-found-item">
-                  <span className="firmware-found-ver">v{fw.version}</span>
-                  <span className="firmware-found-url">{fw.url.split('/').pop()}</span>
-                  <button className="modal-btn modal-btn--primary"
-                    onClick={() => handleDownload(fw)}>↓ Download</button>
-                </div>
-              ))}
+                    <button className="modal-btn firmware-clear-btn" onClick={handleClearCache}>✕ Clear</button>
+                  </>
+                  : <><span className="firmware-status-dot firmware-status-dot--none">○</span>
+                    <span>No firmware cached</span>
+                  </>
+              }
             </div>
-          )}
 
-          {phase === "downloading" && (
-            <div className="firmware-progress-wrap">
-              <div className="firmware-progress-bar">
-                <div className="firmware-progress-fill" style={{ width: `${progress}%` }} />
-              </div>
-              <span className="firmware-progress-label">{progress}%</span>
+            {/* Step 1: Get firmware */}
+            <div className="firmware-section-title">Step 1 — Get firmware</div>
+            <div className="firmware-btn-row">
+              <button className="modal-btn modal-btn--primary" onClick={handleCheck}
+                      disabled={phase === "checking" || phase === "downloading"}>
+                {phase === "checking" ? "Checking…" : "⌕ Check for latest on idoru.live"}
+              </button>
+              <button className="modal-btn" onClick={handlePickManual}
+                      disabled={phase === "downloading"}>
+                ↑ Pick .bin from disk
+              </button>
+              <button className="modal-btn" onClick={handleOpenPage}>
+                ↗ Open idoru.live/downloads
+              </button>
             </div>
-          )}
 
-          {phase === "done" && (
-            <div className="firmware-ok-msg">✓ Firmware ready. Proceed to Step 2.</div>
-          )}
-
-          {phase === "error" && errMsg && (
-            <div className="firmware-err-msg">
-              ⚠ {errMsg}
-            </div>
-          )}
-
-          {/* Step 2: Write to SD card */}
-          <div className={`firmware-section-title${!cached ? " firmware-section-disabled" : ""}`}>
-            Step 2 — Write to SD card
-          </div>
-          {cached
-            ? <>
-                <div className="firmware-note">
-                  Click the button below to select your SD card root folder. CIdoru will create
-                  an <code>update/</code> folder and place the <code>.bin</code> file inside it
-                  (any existing files in <code>update/</code> will be cleared first).
+            {phase === "found" && firmwares.length > 0 && (
+                <div className="firmware-found-list">
+                  {firmwares.map((fw, i) => (
+                      <div key={i} className="firmware-found-item">
+                        <span className="firmware-found-ver">v{fw.version}</span>
+                        <span className="firmware-found-url">{fw.url.split('/').pop()}</span>
+                        <button className="modal-btn modal-btn--primary"
+                                onClick={() => handleDownload(fw)}>↓ Download</button>
+                      </div>
+                  ))}
                 </div>
-                <div className="firmware-btn-row" style={{marginTop:8}}>
-                  <button className="modal-btn modal-btn--primary"
-                    onClick={handleWriteToSd} disabled={writingFw}>
-                    {writingFw ? "Writing…" : "⏏ Select SD card & write firmware"}
-                  </button>
-                </div>
-                {writeMsg && (
-                  <div className={writeMsg.startsWith("✓") ? "firmware-ok-msg" : "firmware-err-msg"}>
-                    {writeMsg}
+            )}
+
+            {phase === "downloading" && (
+                <div className="firmware-progress-wrap">
+                  <div className="firmware-progress-bar">
+                    <div className="firmware-progress-fill" style={{ width: `${progress}%` }} />
                   </div>
-                )}
-              </>
-            : <div className="firmware-note firmware-note--dim">
-                Complete Step 1 first.
-              </div>
-          }
+                  <span className="firmware-progress-label">{progress}%</span>
+                </div>
+            )}
 
-          {/* Step 3: Install */}
-          <div className="firmware-section-title">Step 3 — Install on device</div>
-          <ol className="firmware-steps">
-            <li>Make sure your SD card has at least one setlist and song (required by P-1).</li>
-            <li>With the pedal <strong>off</strong>, insert the SD card.</li>
-            <li>Hold the <strong>Play</strong> footswitch and connect power. Keep holding.</li>
-            <li>Release when the firmware update message appears on the display.</li>
-            <li>Unplug and replug power to restart. Done.</li>
-          </ol>
-          <div className="firmware-note" style={{marginTop:6}}>
-            The current firmware version is shown at boot as <code>SW x.x.x</code>.
-            The P-1 will only install a version different from the currently installed one.
+            {phase === "done" && (
+                <div className="firmware-ok-msg">✓ Firmware ready. Proceed to Step 2.</div>
+            )}
+
+            {phase === "error" && errMsg && (
+                <div className="firmware-err-msg">
+                  ⚠ {errMsg}
+                </div>
+            )}
+
+            {/* Step 2: Write to SD card */}
+            <div className={`firmware-section-title${!cached ? " firmware-section-disabled" : ""}`}>
+              Step 2 — Write to SD card
+            </div>
+            {cached
+                ? <>
+                  <div className="firmware-note">
+                    Click the button below to select your SD card root folder. CIdoru will create
+                    an <code>update/</code> folder and place the <code>.bin</code> file inside it
+                    (any existing files in <code>update/</code> will be cleared first).
+                  </div>
+                  <div className="firmware-btn-row" style={{marginTop:8}}>
+                    <button className="modal-btn modal-btn--primary"
+                            onClick={handleWriteToSd} disabled={writingFw}>
+                      {writingFw ? "Writing…" : "⏏ Select SD card & write firmware"}
+                    </button>
+                  </div>
+                  {writeMsg && (
+                      <div className={writeMsg.startsWith("✓") ? "firmware-ok-msg" : "firmware-err-msg"}>
+                        {writeMsg}
+                      </div>
+                  )}
+                </>
+                : <div className="firmware-note firmware-note--dim">
+                  Complete Step 1 first.
+                </div>
+            }
+
+            {/* Step 3: Install */}
+            <div className="firmware-section-title">Step 3 — Install on device</div>
+            <ol className="firmware-steps">
+              <li>Make sure your SD card has at least one setlist and song (required by P-1).</li>
+              <li>With the pedal <strong>off</strong>, insert the SD card.</li>
+              <li>Hold the <strong>Play</strong> footswitch and connect power. Keep holding.</li>
+              <li>Release when the firmware update message appears on the display.</li>
+              <li>Unplug and replug power to restart. Done.</li>
+            </ol>
+            <div className="firmware-note" style={{marginTop:6}}>
+              The current firmware version is shown at boot as <code>SW x.x.x</code>.
+              The P-1 will only install a version different from the currently installed one.
+            </div>
           </div>
-        </div>
-        <div className="modal-footer">
-          <button className="modal-btn" onClick={onClose}>Close</button>
+          <div className="modal-footer">
+            <button className="modal-btn" onClick={onClose}>Close</button>
+          </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -2372,35 +2353,35 @@ function PlaylistForm({ data, onSave, onCancel }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>{data.id ? "Edit Playlist" : "New Playlist"}</span>
-          <button className="modal-close" onClick={onCancel}>✕</button>
-        </div>
-        <div className="modal-body">
-          <div className="form-row">
-            <label className="form-label">Name</label>
-            <div className="form-field-wrap">
-              <input ref={ref}
-                className={`form-input${!canSave && name.length > 0 ? " form-input--error" : ""}`}
-                value={name} maxLength={32}
-                onChange={handleChange} onKeyDown={onKey}
-                placeholder="a-z  A-Z  0-9  ! @ # …" />
-              <div className="form-char-count">{name.length}/32</div>
-            </div>
+      <div className="modal-overlay" onClick={onCancel}>
+        <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>{data.id ? "Edit Playlist" : "New Playlist"}</span>
+            <button className="modal-close" onClick={onCancel}>✕</button>
           </div>
-          {!canSave && name.length > 0 && (
-            <div className="form-error">{validation.error}</div>
-          )}
-          <div className="form-allowed-chars">Allowed: {P1_ALLOWED_CHARS}</div>
-        </div>
-        <div className="modal-footer">
-          <button className="modal-btn" onClick={onCancel}>Cancel</button>
-          <button className="modal-btn modal-btn--primary" onClick={save} disabled={!canSave}>Save</button>
+          <div className="modal-body">
+            <div className="form-row">
+              <label className="form-label">Name</label>
+              <div className="form-field-wrap">
+                <input ref={ref}
+                       className={`form-input${!canSave && name.length > 0 ? " form-input--error" : ""}`}
+                       value={name} maxLength={32}
+                       onChange={handleChange} onKeyDown={onKey}
+                       placeholder="a-z  A-Z  0-9  ! @ # …" />
+                <div className="form-char-count">{name.length}/32</div>
+              </div>
+            </div>
+            {!canSave && name.length > 0 && (
+                <div className="form-error">{validation.error}</div>
+            )}
+            <div className="form-allowed-chars">Allowed: {P1_ALLOWED_CHARS}</div>
+          </div>
+          <div className="modal-footer">
+            <button className="modal-btn" onClick={onCancel}>Cancel</button>
+            <button className="modal-btn modal-btn--primary" onClick={save} disabled={!canSave}>Save</button>
+          </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -2420,7 +2401,7 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
 
   // Multi-playlist: start with current playlist pre-selected
   const [selectedPlaylistIds, setSelectedPlaylistIds] = useState(
-    () => currentPlaylistId ? [currentPlaylistId] : []
+      () => currentPlaylistId ? [currentPlaylistId] : []
   );
 
   const ref = useRef(null);
@@ -2466,7 +2447,7 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
 
   const togglePlaylist = (plId) => {
     setSelectedPlaylistIds(prev =>
-      prev.includes(plId) ? prev.filter(id => id !== plId) : [...prev, plId]
+        prev.includes(plId) ? prev.filter(id => id !== plId) : [...prev, plId]
     );
   };
 
@@ -2485,154 +2466,154 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
   };
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>{song?.id ? "Edit Song" : "New Song"}</span>
-          <button className="modal-close" onClick={onCancel}>✕</button>
-        </div>
-        <div className="modal-body">
-
-          {/* Playlist assignment (multi-select) */}
-          {!song?.id && allPlaylists.length > 0 && (
-            <>
-              <div className="form-section-divider">Assign to Playlist(s)</div>
-              <div className="playlist-multiselect">
-                {allPlaylists.map(pl => (
-                  <label key={pl.id} className={`pl-check${selectedPlaylistIds.includes(pl.id) ? " pl-check--active" : ""}`}>
-                    <input type="checkbox" checked={selectedPlaylistIds.includes(pl.id)}
-                      onChange={() => togglePlaylist(pl.id)} />
-                    {pl.name}
-                  </label>
-                ))}
-              </div>
-              {selectedPlaylistIds.length === 0 && (
-                <div className="form-error">Select at least one playlist</div>
-              )}
-              {selectedPlaylistIds.length > 1 && (
-                <div className="form-allowed-chars">Song will be duplicated into each selected playlist.</div>
-              )}
-            </>
-          )}
-
-          {/* Preset selector (optional) */}
-          {!song?.id && presets.length > 0 && (
-            <>
-              <div className="form-section-divider">Start from Preset (optional)</div>
-              <div className="form-row">
-                <label className="form-label">Preset</label>
-                <select className="form-select" value={selectedPresetId}
-                  onChange={e => handleApplyPreset(e.target.value)}>
-                  <option value="">— None (use defaults) —</option>
-                  {presets.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}{p.comment ? ` (${p.comment.slice(0, 30)})` : ""}</option>
-                  ))}
-                </select>
-              </div>
-              {selectedPresetId && (
-                <div className="form-allowed-chars">
-                  Routing and fader levels from preset will be applied. Audio files will be empty.
-                </div>
-              )}
-            </>
-          )}
-
-          <div className="form-section-divider">Song Details</div>
-
-          <div className="form-row">
-            <label className="form-label">Name</label>
-            <div className="form-field-wrap">
-              <input ref={ref}
-                className={`form-input${!nameValidation.valid && name.length > 0 ? " form-input--error" : ""}`}
-                value={name} maxLength={32} onChange={e => setName(filterP1(e.target.value))} />
-              <div className="form-char-count">{name.length}/32</div>
-            </div>
+      <div className="modal-overlay" onClick={onCancel}>
+        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>{song?.id ? "Edit Song" : "New Song"}</span>
+            <button className="modal-close" onClick={onCancel}>✕</button>
           </div>
-          {!nameValidation.valid && name.length > 0 && <div className="form-error">{nameValidation.error}</div>}
+          <div className="modal-body">
 
-          <div className="form-row">
-            <label className="form-label">BPM</label>
-            <input className="form-input form-input--short" type="number" min={1} max={999}
-              value={bpm} onChange={e => setBpm(e.target.value)} />
-          </div>
-
-          <div className="form-row">
-            <label className="form-label">Queue</label>
-            <select className="form-select" value={queue} onChange={e => setQueue(e.target.value)}>
-              <option value="queue_next">Queue Next</option>
-              <option value="play_next">Play Next</option>
-              <option value="loop">Loop</option>
-            </select>
-          </div>
-
-          <div className="form-section-divider">Audio &amp; MIDI Files</div>
-          <div className="form-allowed-chars">
-            Names: a-z A-Z 0-9 ! @ # $ % ^ _ = + - &amp; ( ) · max 32 chars · WAV: 44.1 kHz / 16-bit only
-          </div>
-
-          <div className="audio-slots">
-            {slots.map((slot, idx) => (
-              <div key={idx} className="audio-slot-group">
-                <div className="audio-slot">
-                  <span className="slot-index">F{idx+1}</span>
-                  <button className={`slot-ms-btn${slot.stereo ? " slot-ms-btn--stereo" : " slot-ms-btn--mono"}`}
-                    onClick={() => setSlots(prev => prev.map((s, i) => i !== idx ? s : { ...s, stereo: !s.stereo }))}
-                    title={slot.stereo ? "Stereo — click to force mono" : "Mono — click to force stereo"}>
-                    {slot.stereo
-                      ? <svg viewBox="0 0 26 14" className="slot-ms-icon"><circle cx="9" cy="7" r="5.5"/><circle cx="17" cy="7" r="5.5"/></svg>
-                      : <svg viewBox="0 0 14 14" className="slot-ms-icon"><circle cx="7" cy="7" r="5.5"/></svg>
-                    }
-                  </button>
-                  <input className="form-input form-input--short slot-shortname"
-                    value={slot.shortName} placeholder="BG" maxLength={2}
-                    onChange={e => setSlots(prev => prev.map((s, i) => i !== idx ? s : { ...s, shortName: e.target.value.toUpperCase() }))}
-                    title="2-char fader name on P-1 display" />
-                  <input className={`form-input slot-filename${slotWarnings[idx] ? " form-input--warn" : ""}`}
-                    value={slot.fileName} placeholder="filename without .wav"
-                    onChange={e => setSlots(prev => prev.map((s, i) => i !== idx ? s : { ...s, fileName: filterP1(e.target.value) }))} />
-                  <button className="slot-pick-btn" onClick={() => handleFilePick(idx)}
-                    title="Browse WAV — reads header for stereo, 44.1 kHz and 16-bit checks">↑ WAV</button>
-                </div>
-                {slotWarnings[idx] && (
-                  <div className="slot-warnings">
-                    {slotWarnings[idx].map((w, wi) => <span key={wi} className="slot-warning">⚠ {w}</span>)}
+            {/* Playlist assignment (multi-select) */}
+            {!song?.id && allPlaylists.length > 0 && (
+                <>
+                  <div className="form-section-divider">Assign to Playlist(s)</div>
+                  <div className="playlist-multiselect">
+                    {allPlaylists.map(pl => (
+                        <label key={pl.id} className={`pl-check${selectedPlaylistIds.includes(pl.id) ? " pl-check--active" : ""}`}>
+                          <input type="checkbox" checked={selectedPlaylistIds.includes(pl.id)}
+                                 onChange={() => togglePlaylist(pl.id)} />
+                          {pl.name}
+                        </label>
+                    ))}
                   </div>
+                  {selectedPlaylistIds.length === 0 && (
+                      <div className="form-error">Select at least one playlist</div>
+                  )}
+                  {selectedPlaylistIds.length > 1 && (
+                      <div className="form-allowed-chars">Song will be duplicated into each selected playlist.</div>
+                  )}
+                </>
+            )}
+
+            {/* Preset selector (optional) */}
+            {!song?.id && presets.length > 0 && (
+                <>
+                  <div className="form-section-divider">Start from Preset (optional)</div>
+                  <div className="form-row">
+                    <label className="form-label">Preset</label>
+                    <select className="form-select" value={selectedPresetId}
+                            onChange={e => handleApplyPreset(e.target.value)}>
+                      <option value="">— None (use defaults) —</option>
+                      {presets.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}{p.comment ? ` (${p.comment.slice(0, 30)})` : ""}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {selectedPresetId && (
+                      <div className="form-allowed-chars">
+                        Routing and fader levels from preset will be applied. Audio files will be empty.
+                      </div>
+                  )}
+                </>
+            )}
+
+            <div className="form-section-divider">Song Details</div>
+
+            <div className="form-row">
+              <label className="form-label">Name</label>
+              <div className="form-field-wrap">
+                <input ref={ref}
+                       className={`form-input${!nameValidation.valid && name.length > 0 ? " form-input--error" : ""}`}
+                       value={name} maxLength={32} onChange={e => setName(filterP1(e.target.value))} />
+                <div className="form-char-count">{name.length}/32</div>
+              </div>
+            </div>
+            {!nameValidation.valid && name.length > 0 && <div className="form-error">{nameValidation.error}</div>}
+
+            <div className="form-row">
+              <label className="form-label">BPM</label>
+              <input className="form-input form-input--short" type="number" min={1} max={999}
+                     value={bpm} onChange={e => setBpm(e.target.value)} />
+            </div>
+
+            <div className="form-row">
+              <label className="form-label">Queue</label>
+              <select className="form-select" value={queue} onChange={e => setQueue(e.target.value)}>
+                <option value="queue_next">Queue Next</option>
+                <option value="play_next">Play Next</option>
+                <option value="loop">Loop</option>
+              </select>
+            </div>
+
+            <div className="form-section-divider">Audio &amp; MIDI Files</div>
+            <div className="form-allowed-chars">
+              Names: a-z A-Z 0-9 ! @ # $ % ^ _ = + - &amp; ( ) · max 32 chars · WAV: 44.1 kHz / 16-bit only
+            </div>
+
+            <div className="audio-slots">
+              {slots.map((slot, idx) => (
+                  <div key={idx} className="audio-slot-group">
+                    <div className="audio-slot">
+                      <span className="slot-index">F{idx+1}</span>
+                      <button className={`slot-ms-btn${slot.stereo ? " slot-ms-btn--stereo" : " slot-ms-btn--mono"}`}
+                              onClick={() => setSlots(prev => prev.map((s, i) => i !== idx ? s : { ...s, stereo: !s.stereo }))}
+                              title={slot.stereo ? "Stereo — click to force mono" : "Mono — click to force stereo"}>
+                        {slot.stereo
+                            ? <svg viewBox="0 0 26 14" className="slot-ms-icon"><circle cx="9" cy="7" r="5.5"/><circle cx="17" cy="7" r="5.5"/></svg>
+                            : <svg viewBox="0 0 14 14" className="slot-ms-icon"><circle cx="7" cy="7" r="5.5"/></svg>
+                        }
+                      </button>
+                      <input className="form-input form-input--short slot-shortname"
+                             value={slot.shortName} placeholder="BG" maxLength={2}
+                             onChange={e => setSlots(prev => prev.map((s, i) => i !== idx ? s : { ...s, shortName: e.target.value.toUpperCase() }))}
+                             title="2-char fader name on P-1 display" />
+                      <input className={`form-input slot-filename${slotWarnings[idx] ? " form-input--warn" : ""}`}
+                             value={slot.fileName} placeholder="filename without .wav"
+                             onChange={e => setSlots(prev => prev.map((s, i) => i !== idx ? s : { ...s, fileName: filterP1(e.target.value) }))} />
+                      <button className="slot-pick-btn" onClick={() => handleFilePick(idx)}
+                              title="Browse WAV — reads header for stereo, 44.1 kHz and 16-bit checks">↑ WAV</button>
+                    </div>
+                    {slotWarnings[idx] && (
+                        <div className="slot-warnings">
+                          {slotWarnings[idx].map((w, wi) => <span key={wi} className="slot-warning">⚠ {w}</span>)}
+                        </div>
+                    )}
+                  </div>
+              ))}
+
+              {/* MIDI slot — same visual row style as F1-F6 */}
+              <div className="audio-slot-group">
+                <div className="audio-slot">
+                  <span className="slot-index slot-index--midi">MIDI</span>
+                  {/* spacer to align with M/S button column */}
+                  <div className="slot-ms-btn slot-ms-btn--placeholder" aria-hidden="true" />
+                  {/* no short-name for MIDI */}
+                  <div className="form-input form-input--short slot-shortname slot-shortname--placeholder" aria-hidden="true" />
+                  <input
+                      className={`form-input slot-filename${!midiValidation.valid && midi.length > 0 ? " form-input--error" : ""}`}
+                      value={midi} placeholder="filename without .mid"
+                      onChange={e => setMidi(filterP1(e.target.value))} maxLength={32} />
+                  <button className="slot-pick-btn slot-pick-btn--midi" onClick={handleMidiPick}
+                          title="Browse .mid file">↑ MID</button>
+                </div>
+                {!midiValidation.valid && midi.length > 0 && (
+                    <div className="slot-warnings">
+                      <span className="slot-warning">⚠ {midiValidation.error}</span>
+                    </div>
                 )}
               </div>
-            ))}
-
-            {/* MIDI slot — same visual row style as F1-F6 */}
-            <div className="audio-slot-group">
-              <div className="audio-slot">
-                <span className="slot-index slot-index--midi">MIDI</span>
-                {/* spacer to align with M/S button column */}
-                <div className="slot-ms-btn slot-ms-btn--placeholder" aria-hidden="true" />
-                {/* no short-name for MIDI */}
-                <div className="form-input form-input--short slot-shortname slot-shortname--placeholder" aria-hidden="true" />
-                <input
-                  className={`form-input slot-filename${!midiValidation.valid && midi.length > 0 ? " form-input--error" : ""}`}
-                  value={midi} placeholder="filename without .mid"
-                  onChange={e => setMidi(filterP1(e.target.value))} maxLength={32} />
-                <button className="slot-pick-btn slot-pick-btn--midi" onClick={handleMidiPick}
-                  title="Browse .mid file">↑ MID</button>
-              </div>
-              {!midiValidation.valid && midi.length > 0 && (
-                <div className="slot-warnings">
-                  <span className="slot-warning">⚠ {midiValidation.error}</span>
-                </div>
-              )}
             </div>
           </div>
-        </div>
 
-        <div className="modal-footer">
-          <button className="modal-btn" onClick={onCancel}>Cancel</button>
-          <button className="modal-btn modal-btn--primary" onClick={save} disabled={!canSave}>
-            {selectedPlaylistIds.length > 1 ? `Save to ${selectedPlaylistIds.length} Playlists` : "Save"}
-          </button>
+          <div className="modal-footer">
+            <button className="modal-btn" onClick={onCancel}>Cancel</button>
+            <button className="modal-btn modal-btn--primary" onClick={save} disabled={!canSave}>
+              {selectedPlaylistIds.length > 1 ? `Save to ${selectedPlaylistIds.length} Playlists` : "Save"}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -2643,53 +2624,53 @@ function WebWelcomeModal({ onClose }) {
   const winUrl   = '/CIdoru-Setup-1.8.0.exe';
   const linuxUrl = '/CIdoru-Setup-1.8.0.AppImage';
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span>⚠ Please Read Before Using</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
-        </div>
-        <div className="modal-body">
-          <p className="welcome-lead">
-            You are using the <strong>web version</strong> of CIdoru — intended for quick demos
-            and emergency situations only.
-          </p>
-          <p className="welcome-body">
-            As a browser-based application, it has significant limitations imposed by browser
-            security restrictions:
-          </p>
-          <ul className="welcome-list">
-            <li>WAV and MIDI files must be re-picked every session — paths cannot be remembered between page loads.</li>
-            <li>SD card transfer requires Chrome or Edge and copies files only if they were picked in the current session.</li>
-            <li>The file scan cannot verify whether files actually exist on disk.</li>
-            <li>Firmware auto-download and SD card write are not available.</li>
-          </ul>
-          <p className="welcome-body">
-            For the full experience, please download and install the <strong>CIdoru Desktop
-            Application</strong>. The installer is not code-signed — Windows will display an
-            "Unknown Publisher" warning. Simply click <em>More info → Run anyway</em> to proceed,
-            exactly as you would with the original Idoru software.
-          </p>
-          <div className="welcome-download-row">
-            <a href={winUrl} download className="modal-btn modal-btn--primary welcome-dl-btn">
-              ⬇ Download for Windows (.exe)
-            </a>
-            <a href={linuxUrl} download className="modal-btn welcome-dl-btn">
-              ⬇ Download for Linux (.AppImage)
-            </a>
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>⚠ Please Read Before Using</span>
+            <button className="modal-close" onClick={onClose}>✕</button>
           </div>
-          <p className="welcome-sig">
-            Thank you for your attention.<br/>
-            <em>Barney Estrada, CIdoru developer</em>
-          </p>
-        </div>
-        <div className="modal-footer">
-          <button className="modal-btn modal-btn--primary" onClick={onClose}>
-            I understand — continue with web version
-          </button>
+          <div className="modal-body">
+            <p className="welcome-lead">
+              You are using the <strong>web version</strong> of CIdoru — intended for quick demos
+              and emergency situations only.
+            </p>
+            <p className="welcome-body">
+              As a browser-based application, it has significant limitations imposed by browser
+              security restrictions:
+            </p>
+            <ul className="welcome-list">
+              <li>WAV and MIDI files must be re-picked every session — paths cannot be remembered between page loads.</li>
+              <li>SD card transfer requires Chrome or Edge and copies files only if they were picked in the current session.</li>
+              <li>The file scan cannot verify whether files actually exist on disk.</li>
+              <li>Firmware auto-download and SD card write are not available.</li>
+            </ul>
+            <p className="welcome-body">
+              For the full experience, please download and install the <strong>CIdoru Desktop
+              Application</strong>. The installer is not code-signed — Windows will display an
+              "Unknown Publisher" warning. Simply click <em>More info → Run anyway</em> to proceed,
+              exactly as you would with the original Idoru software.
+            </p>
+            <div className="welcome-download-row">
+              <a href={winUrl} download className="modal-btn modal-btn--primary welcome-dl-btn">
+                ⬇ Download for Windows (.exe)
+              </a>
+              <a href={linuxUrl} download className="modal-btn welcome-dl-btn">
+                ⬇ Download for Linux (.AppImage)
+              </a>
+            </div>
+            <p className="welcome-sig">
+              Thank you for your attention.<br/>
+              <em>Barney Estrada, CIdoru developer</em>
+            </p>
+          </div>
+          <div className="modal-footer">
+            <button className="modal-btn modal-btn--primary" onClick={onClose}>
+              I understand — continue with web version
+            </button>
+          </div>
         </div>
       </div>
-    </div>
   );
 }
 
@@ -2716,21 +2697,21 @@ function UpdateBanner() {
   if (!state) return null;
 
   const msg = state === 'available'
-    ? `↑ Update v${info?.version} available — downloading…`
-    : state === 'downloading'
-      ? `↓ Downloading update… ${pct}%`
-      : `✓ Update v${info?.version} ready — restart to install`;
+      ? `↑ Update v${info?.version} available — downloading…`
+      : state === 'downloading'
+          ? `↓ Downloading update… ${pct}%`
+          : `✓ Update v${info?.version} ready — restart to install`;
 
   return (
-    <div className={`update-bar update-bar--${state}`}>
-      <span>{msg}</span>
-      {state === 'ready' && (
-        <button className="update-bar-btn"
-          onClick={() => window.electronAPI.updater.install()}>
-          Restart &amp; Install
-        </button>
-      )}
-    </div>
+      <div className={`update-bar update-bar--${state}`}>
+        <span>{msg}</span>
+        {state === 'ready' && (
+            <button className="update-bar-btn"
+                    onClick={() => window.electronAPI.updater.install()}>
+              Restart &amp; Install
+            </button>
+        )}
+      </div>
   );
 }
 
@@ -2769,7 +2750,7 @@ export function App() {
   const handleScanRef = useRef(null);
   useEffect(() => {
     const hasFiles = project.songs?.some(s =>
-      s.audioSlots?.some(sl => sl?.fileName) || s.midiFile
+        s.audioSlots?.some(sl => sl?.fileName) || s.midiFile
     );
     if (!hasFiles) return;
     // Wait for loadFileCache to populate, then do a silent background scan.
@@ -2779,7 +2760,7 @@ export function App() {
       await handleScanRef.current({ silent: true });
     }, 800);
     return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // only on mount
 
   const handleToggleTheme = useCallback(() => {
@@ -2962,8 +2943,8 @@ export function App() {
           });
 
           const midiFile = isong.midiFile?.fileName
-            ? isong.midiFile.fileName.replace(/\.(mid|midi|MID|MIDI)$/, '')
-            : null;
+              ? isong.midiFile.fileName.replace(/\.(mid|midi|MID|MIDI)$/, '')
+              : null;
 
           const queueMap = { QueueNext: 'queue_next', PlayNext: 'play_next', Loop: 'loop' };
           const cidoruSongId   = genId();
@@ -3030,8 +3011,8 @@ export function App() {
       setSelectedPlId(null); setSongId(null);
 
       showInfo(
-        `Imported ${newPlaylists.length} playlist(s), ${newSongs.length} song(s) from .idoru. ` +
-        `Running file scan…`, "success"
+          `Imported ${newPlaylists.length} playlist(s), ${newSongs.length} song(s) from .idoru. ` +
+          `Running file scan…`, "success"
       );
       // Auto-scan after import — file paths from .idoru may or may not exist
       setTimeout(() => handleScanRef.current?.({ silent: true }), 400);
@@ -3119,8 +3100,8 @@ export function App() {
         const nameNoExt = r.fileName;
         if (folderMap[nameNoExt]) {
           const cacheKey = r.slotIdx >= 0
-            ? `${r.songId}_f${r.slotIdx}`
-            : `${r.songId}_midi`;
+              ? `${r.songId}_f${r.slotIdx}`
+              : `${r.songId}_midi`;
           fileCache.current.set(cacheKey, folderMap[nameNoExt]);
           matched++;
           return { ...r, missing: false, unverified: false };
@@ -3165,12 +3146,12 @@ export function App() {
     setDirtyIds(prev => new Set([...prev, scanEntry.songId]));
     // Update the scan modal results to mark this entry as resolved
     setScanModal(prev => prev
-      ? prev.map(r =>
-          r.songId === scanEntry.songId && r.slotIdx === scanEntry.slotIdx
-            ? { ...r, missing: false, unverified: false, fileName: nameNoExt }
-            : r
+        ? prev.map(r =>
+            r.songId === scanEntry.songId && r.slotIdx === scanEntry.slotIdx
+                ? { ...r, missing: false, unverified: false, fileName: nameNoExt }
+                : r
         )
-      : prev
+        : prev
     );
   }, [showInfo]);
 
@@ -3185,8 +3166,8 @@ export function App() {
 
     try {
       const result = await platform.transfer(
-        project, mixerStates, fileCache.current,
-        (msg) => appendLine(msg)
+          project, mixerStates, fileCache.current,
+          (msg) => appendLine(msg)
       );
       setTransferModal(prev => prev ? { ...prev, done: true, result } : prev);
     } catch (err) {
@@ -3229,8 +3210,8 @@ export function App() {
           ...existing,
           ...serializableData,
           fileUUID: serializableData.fileName
-            ? (existing.fileUUID || genUUID())
-            : null,
+              ? (existing.fileUUID || genUUID())
+              : null,
         };
         return { ...s, audioSlots: slots };
       }),
@@ -3266,6 +3247,7 @@ export function App() {
   const savedState        = selectedSongId ? mixerStates[selectedSongId] : null;
   const initialLinkedPairs = savedState?.linkedPairs ?? [false, false, false];
   const initialMatrix      = savedState?.matrix      ?? null;
+  const initialLeftMutes    = savedState?.leftMutes   ?? null;
 
   // ── CRUD — Playlists ──────────────────────────────────────────────
   const handleSelectPlaylist = (id) => { setSelectedPlId(id); setSongId(null); };
@@ -3274,7 +3256,7 @@ export function App() {
     setProject(p => ({
       ...p,
       playlists: id ? p.playlists.map(pl => pl.id === id ? { ...pl, name } : pl)
-                    : [...p.playlists, { id: genId(), uuid: genUUID(), name }],
+          : [...p.playlists, { id: genId(), uuid: genUUID(), name }],
     }));
     setPlForm(null);
     setDirtyIds(prev => new Set([...prev, "__meta"]));
@@ -3361,11 +3343,11 @@ export function App() {
         if (_slotFiles) {
           _slotFiles.forEach((f, idx) => {
             if (f) platform.cacheFileFromPickResult(fileCache.current, `${s.id}_f${idx}`,
-              { file: f instanceof File ? f : null, filePath: typeof f === "string" ? f : null });
+                { file: f instanceof File ? f : null, filePath: typeof f === "string" ? f : null });
           });
         }
         if (_midiFile) platform.cacheFileFromPickResult(fileCache.current, `${s.id}_midi`,
-          { file: _midiFile instanceof File ? _midiFile : null, filePath: typeof _midiFile === "string" ? _midiFile : null });
+            { file: _midiFile instanceof File ? _midiFile : null, filePath: typeof _midiFile === "string" ? _midiFile : null });
       });
 
       setProject(p => ({ ...p, songs: [...p.songs, ...newSongs] }));
@@ -3387,26 +3369,26 @@ export function App() {
       if (_slotFiles) {
         _slotFiles.forEach((f, idx) => {
           if (f) platform.cacheFileFromPickResult(fileCache.current, `${rest.id}_f${idx}`,
-            { file: f instanceof File ? f : null, filePath: typeof f === "string" ? f : null });
+              { file: f instanceof File ? f : null, filePath: typeof f === "string" ? f : null });
         });
       }
       if (_midiFile) platform.cacheFileFromPickResult(fileCache.current, `${rest.id}_midi`,
-        { file: _midiFile instanceof File ? _midiFile : null, filePath: typeof _midiFile === "string" ? _midiFile : null });
+          { file: _midiFile instanceof File ? _midiFile : null, filePath: typeof _midiFile === "string" ? _midiFile : null });
       // Ensure uuid and file UUIDs are preserved/assigned on edit
       setProject(p => ({ ...p, songs: p.songs.map(s => {
-        if (s.id !== rest.id) return s;
-        const updatedSlots = (rest.audioSlots ?? s.audioSlots ?? defaultAudioSlots()).map((sl, i) => ({
-          ...sl,
-          fileUUID: sl.fileUUID || (sl.fileName ? (s.audioSlots?.[i]?.fileUUID || genUUID()) : null),
-        }));
-        return {
-          ...rest,
-          uuid:         s.uuid || genUUID(),
-          playlistId:   s.playlistId,
-          audioSlots:   updatedSlots,
-          midiFileUUID: rest.midiFile ? (s.midiFileUUID || genUUID()) : null,
-        };
-      })}));
+          if (s.id !== rest.id) return s;
+          const updatedSlots = (rest.audioSlots ?? s.audioSlots ?? defaultAudioSlots()).map((sl, i) => ({
+            ...sl,
+            fileUUID: sl.fileUUID || (sl.fileName ? (s.audioSlots?.[i]?.fileUUID || genUUID()) : null),
+          }));
+          return {
+            ...rest,
+            uuid:         s.uuid || genUUID(),
+            playlistId:   s.playlistId,
+            audioSlots:   updatedSlots,
+            midiFileUUID: rest.midiFile ? (s.midiFileUUID || genUUID()) : null,
+          };
+        })}));
       setDirtyIds(prev => new Set([...prev, rest.id]));
     }
     setSongForm(null);
@@ -3451,110 +3433,117 @@ export function App() {
   const currentMixerState = selectedSongId ? (mixerStates[selectedSongId] ?? {}) : {};
 
   return (
-    <div className="idoru-app">
-      <ToolBar
-        onSave={handleSave} onLoad={handleLoad} onTransfer={handleTransfer}
-        onSwitchView={() => setViewMode(v => v === "classic" ? "matrix" : "classic")}
-        viewMode={viewMode} dirty={dirty}
-        onExport={handleExport} onImport={handleImport} onImportIdoru={handleImportIdoru}
-        onNewSession={handleNewSession} onSavePreset={handleSavePreset}
-        onScan={handleScan} onFirmware={() => setFirmwareModal(true)}
-        theme={theme} onToggleTheme={handleToggleTheme}
-      />
-      <div className="disclaimer-bar">
-        THIS IS 3RD-PARTY SOFTWARE UNRELATED TO IDORU LIVE UG. IN CASE OF ANY ISSUES WITH THIS APPLICATION, DO NOT CONTACT IDORU LIVE UG TEAM — CONTACT&nbsp;
-        <a href="mailto:barney.estrada@bastardizer.cz" className="disclaimer-link">barney.estrada@bastardizer.cz</a>.
-        FOR MORE INFO ABOUT CIDORU APP PLEASE VISIT <a href="https://dev.grinware.cz" target="_blank" className="disclaimer-link">DEV.GRINWARE.CZ</a>.
-      </div>
-      <UpdateBanner />
-
-      <div className="main-layout">
-        <div className="left-column">
-          <PlaylistPane playlists={project.playlists} selectedId={selectedPlId}
-            onSelect={handleSelectPlaylist}
-            onAdd={() => setPlForm({ id: null, name: "" })}
-            onEdit={(pl) => setPlForm({ ...pl })}
-            onDelete={handleDeletePlaylist}
-            onDuplicate={handleDuplicatePlaylist}
-            onMoveUp={(idx) => handleMovePlaylists(idx, -1)}
-            onMoveDown={(idx) => handleMovePlaylists(idx, 1)}
-          />
-
-          <SongsPane songs={songsInPlaylist} selectedId={selectedSongId} disabled={!selectedPlId}
-            onSelect={setSongId}
-            onAdd={() => setSongForm({ _new: true })}
-            onEdit={(s) => setSongForm({ ...s })}
-            onDelete={handleDeleteSong}
-            onDuplicate={handleDuplicateSong}
-            onMoveUp={(idx) => handleMoveSongs(idx, -1)}
-            onMoveDown={(idx) => handleMoveSongs(idx, 1)}
-          />
+      <div className="idoru-app">
+        <ToolBar
+            onSave={handleSave} onLoad={handleLoad} onTransfer={handleTransfer}
+            onSwitchView={() => setViewMode(v => v === "classic" ? "matrix" : "classic")}
+            viewMode={viewMode} dirty={dirty}
+            onExport={handleExport} onImport={handleImport} onImportIdoru={handleImportIdoru}
+            onNewSession={handleNewSession} onSavePreset={handleSavePreset}
+            onScan={handleScan} onFirmware={() => setFirmwareModal(true)}
+            theme={theme} onToggleTheme={handleToggleTheme}
+        />
+        <div className="disclaimer-bar">
+          THIS IS 3RD-PARTY SOFTWARE UNRELATED TO IDORU LIVE UG. IN CASE OF ANY ISSUES WITH THIS APPLICATION, DO NOT CONTACT IDORU LIVE UG TEAM — CONTACT&nbsp;
+          <a href="mailto:barney.estrada@bastardizer.cz" className="disclaimer-link">barney.estrada@bastardizer.cz</a>.
+          FOR MORE INFO ABOUT CIDORU APP PLEASE VISIT <a href="https://dev.grinware.cz" target="_blank" className="disclaimer-link">DEV.GRINWARE.CZ</a>.
         </div>
+        {!platform.isElectron() && (
+            <div className="web-demo-banner">
+              Starting with version 1.9.1, the web version is provided as a demo only. Browsers cannot reliably access your filesystem for SD card transfer and file management, so active development and support now focus on the desktop app. Using the web version for live production work is at your own risk.{" "}
+              <a href="https://github.com/DusJir/Cidoru/releases" target="_blank" className="web-demo-banner-link">Download the desktop app →</a>
+            </div>
+        )}
+        <UpdateBanner />
 
-        <div className={`mixer-pane${!selectedSongId ? " mixer-pane--disabled" : ""}`}>
-          {!selectedSongId && <div className="mixer-disabled-msg">Select a song to activate the mixer</div>}
+        <div className="main-layout">
+          <div className="left-column">
+            <PlaylistPane playlists={project.playlists} selectedId={selectedPlId}
+                          onSelect={handleSelectPlaylist}
+                          onAdd={() => setPlForm({ id: null, name: "" })}
+                          onEdit={(pl) => setPlForm({ ...pl })}
+                          onDelete={handleDeletePlaylist}
+                          onDuplicate={handleDuplicatePlaylist}
+                          onMoveUp={(idx) => handleMovePlaylists(idx, -1)}
+                          onMoveDown={(idx) => handleMovePlaylists(idx, 1)}
+            />
 
-          {viewMode === "classic" && (
-            <IdoruScene
-              key={selectedSongId ?? "__default"}
-              sceneCfg={effectiveSceneCfg}
-              initialLinkedPairs={initialLinkedPairs}
-              initialMatrix={initialMatrix}
-              onStateChange={handleMixerStateChange}
-              audioSlots={selectedSong?.audioSlots ?? null}
-              onSlotUpdate={selectedSongId ? handleSlotUpdate : null}
-              kbDisabled={!!(playlistForm || songForm || presetForm || scanModal || confirmModal || firmwareModal || transferModal)}
-              audioTransportSlot={(selectedCol) => (
-                <AudioTransport
-                  song={selectedSong}
-                  mixerState={currentMixerState}
-                  fileCache={fileCache.current}
-                  selectedCol={selectedCol}
+            <SongsPane songs={songsInPlaylist} selectedId={selectedSongId} disabled={!selectedPlId}
+                       onSelect={setSongId}
+                       onAdd={() => setSongForm({ _new: true })}
+                       onEdit={(s) => setSongForm({ ...s })}
+                       onDelete={handleDeleteSong}
+                       onDuplicate={handleDuplicateSong}
+                       onMoveUp={(idx) => handleMoveSongs(idx, -1)}
+                       onMoveDown={(idx) => handleMoveSongs(idx, 1)}
+            />
+          </div>
+
+          <div className={`mixer-pane${!selectedSongId ? " mixer-pane--disabled" : ""}`}>
+            {!selectedSongId && <div className="mixer-disabled-msg">Select a song to activate the mixer</div>}
+
+            {viewMode === "classic" && (
+                <IdoruScene
+                    key={selectedSongId ?? "__default"}
+                    sceneCfg={effectiveSceneCfg}
+                    initialLinkedPairs={initialLinkedPairs}
+                    initialMatrix={initialMatrix}
+                    initialLeftMutes={initialLeftMutes}
+                    onStateChange={handleMixerStateChange}
+                    audioSlots={selectedSong?.audioSlots ?? null}
+                    onSlotUpdate={selectedSongId ? handleSlotUpdate : null}
+                    kbDisabled={!!(playlistForm || songForm || presetForm || scanModal || confirmModal || firmwareModal || transferModal)}
+                    audioTransportSlot={(selectedCol) => (
+                        <AudioTransport
+                            song={selectedSong}
+                            mixerState={currentMixerState}
+                            fileCache={fileCache.current}
+                            selectedCol={selectedCol}
+                        />
+                    )}
                 />
-              )}
-            />
-          )}
+            )}
 
-          {viewMode === "matrix" && (
-            <MatrixView
-              song={selectedSong}
-              matrix={currentMixerState.matrix ?? null}
-              linkedPairs={initialLinkedPairs}
-              onChange={handleMatrixChange}
-              disabled={!selectedSongId}
-            />
-          )}
+            {viewMode === "matrix" && (
+                <MatrixView
+                    song={selectedSong}
+                    matrix={currentMixerState.matrix ?? null}
+                    linkedPairs={initialLinkedPairs}
+                    onChange={handleMatrixChange}
+                    disabled={!selectedSongId}
+                />
+            )}
+          </div>
+
+          <HelpPane context={helpContext} viewMode={viewMode} />
         </div>
 
-        <HelpPane context={helpContext} viewMode={viewMode} />
+        <InfoBar message={infoMsg} />
+
+        {/* Modals */}
+        {playlistForm   && <PlaylistForm data={playlistForm} onSave={handleSavePlaylist} onCancel={() => setPlForm(null)} />}
+        {songForm       && (
+            <SongForm
+                song={songForm.id ? songForm : null}
+                allPlaylists={project.playlists}
+                currentPlaylistId={selectedPlId}
+                onSave={handleSaveSong}
+                onCancel={() => setSongForm(null)}
+            />
+        )}
+        {transferModal  && <TransferModal lines={transferModal.lines} done={transferModal.done} result={transferModal.result} onClose={() => setTransferModal(null)} />}
+        {presetForm     && <SavePresetModal onSave={handleConfirmPreset} onCancel={() => setPresetForm(false)} />}
+        {scanModal      && <ScanModal results={scanModal} onRelink={handleRelink} onScanFolder={handleScanFolder} onClose={() => setScanModal(null)} />}
+        {firmwareModal  && <FirmwareModal onClose={() => setFirmwareModal(false)} />}
+        {welcomeModal   && <WebWelcomeModal onClose={() => setWelcomeModal(false)} />}
+        {confirmModal   && (
+            <ConfirmModal
+                title={confirmModal.title} message={confirmModal.message}
+                confirmLabel={confirmModal.confirmLabel} danger={confirmModal.danger}
+                onConfirm={confirmModal.onConfirm} onCancel={() => setConfirmModal(null)}
+            />
+        )}
       </div>
-
-      <InfoBar message={infoMsg} />
-
-      {/* Modals */}
-      {playlistForm   && <PlaylistForm data={playlistForm} onSave={handleSavePlaylist} onCancel={() => setPlForm(null)} />}
-      {songForm       && (
-        <SongForm
-          song={songForm.id ? songForm : null}
-          allPlaylists={project.playlists}
-          currentPlaylistId={selectedPlId}
-          onSave={handleSaveSong}
-          onCancel={() => setSongForm(null)}
-        />
-      )}
-      {transferModal  && <TransferModal lines={transferModal.lines} done={transferModal.done} result={transferModal.result} onClose={() => setTransferModal(null)} />}
-      {presetForm     && <SavePresetModal onSave={handleConfirmPreset} onCancel={() => setPresetForm(false)} />}
-      {scanModal      && <ScanModal results={scanModal} onRelink={handleRelink} onScanFolder={handleScanFolder} onClose={() => setScanModal(null)} />}
-      {firmwareModal  && <FirmwareModal onClose={() => setFirmwareModal(false)} />}
-      {welcomeModal   && <WebWelcomeModal onClose={() => setWelcomeModal(false)} />}
-      {confirmModal   && (
-        <ConfirmModal
-          title={confirmModal.title} message={confirmModal.message}
-          confirmLabel={confirmModal.confirmLabel} danger={confirmModal.danger}
-          onConfirm={confirmModal.onConfirm} onCancel={() => setConfirmModal(null)}
-        />
-      )}
-    </div>
   );
 }
 
@@ -3567,28 +3556,28 @@ function autoNames(n) { return Array.from({ length: n }, (_, i) => NAME_POOL[i] 
 export function MixConsole({ banks = [], onFaderChange, onMuteChange, cfg = CONFIG, showVu = true }) {
   const [activeKey, setActiveKey] = useState(null);
   return (
-    <div className="mix-console">
-      {banks.map((bDef, bIdx) => {
-        const chDefs = bDef.channels ?? autoNames(8).map(l => ({ label: l, initialDb: 0 }));
-        return (
-          <div key={bIdx} className="bank">
-            <div className="bank-header">
-              <span className="bank-number">B{bIdx+1}</span>
-              {bDef.label && <span className="bank-label">{bDef.label}</span>}
-              <span className="bank-fader-count">{chDefs.length} ch</span>
-            </div>
-            <div className="bank-strips">
-              {chDefs.map((ch, cIdx) => (
-                <ChannelStrip key={cIdx} label={ch.label} initialDb={ch.initialDb ?? 0}
-                  bank={bIdx+1} cfg={cfg} showVu={showVu}
-                  isActive={activeKey === `${bIdx}-${cIdx}`}
-                  onActivate={() => setActiveKey(`${bIdx}-${cIdx}`)}
-                  onFaderChange={onFaderChange} onMuteChange={onMuteChange} />
-              ))}
-            </div>
-          </div>
-        );
-      })}
-    </div>
+      <div className="mix-console">
+        {banks.map((bDef, bIdx) => {
+          const chDefs = bDef.channels ?? autoNames(8).map(l => ({ label: l, initialDb: 0 }));
+          return (
+              <div key={bIdx} className="bank">
+                <div className="bank-header">
+                  <span className="bank-number">B{bIdx+1}</span>
+                  {bDef.label && <span className="bank-label">{bDef.label}</span>}
+                  <span className="bank-fader-count">{chDefs.length} ch</span>
+                </div>
+                <div className="bank-strips">
+                  {chDefs.map((ch, cIdx) => (
+                      <ChannelStrip key={cIdx} label={ch.label} initialDb={ch.initialDb ?? 0}
+                                    bank={bIdx+1} cfg={cfg} showVu={showVu}
+                                    isActive={activeKey === `${bIdx}-${cIdx}`}
+                                    onActivate={() => setActiveKey(`${bIdx}-${cIdx}`)}
+                                    onFaderChange={onFaderChange} onMuteChange={onMuteChange} />
+                  ))}
+                </div>
+              </div>
+          );
+        })}
+      </div>
   );
 }

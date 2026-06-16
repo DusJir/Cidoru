@@ -1,11 +1,13 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { basename, join } from "path";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
-import { mkdir, writeFile, readFile } from "fs/promises";
+import { readFile, mkdir, writeFile } from "fs/promises";
+import updater from "electron-updater";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
+const { autoUpdater } = updater;
 const userData = () => app.getPath("userData");
 const sessionPath = () => join(userData(), "session.json");
 const presetsPath = () => join(userData(), "presets.json");
@@ -233,7 +235,9 @@ function generateSongFile(song, state) {
     txt += section + CRLF;
     for (let inIdx = 0; inIdx < 7; inIdx++) {
       const level = mat[inIdx][colIdx];
-      const mute = lf[inIdx] ? " MUTE" : "";
+      const hasFile = inIdx < 6 ? !!slots[inIdx]?.fileName : true;
+      const effectiveMuted = !hasFile || level === 0 || hasFile && lf[inIdx];
+      const mute = effectiveMuted ? " MUTE" : "";
       txt += `IN${inIdx + 1}- ${IN_KEYS[inIdx]} ${level}${mute}` + CRLF;
     }
     txt += CRLF;
@@ -300,9 +304,35 @@ app.whenReady().then(() => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+  if (app.isPackaged) {
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.on("update-available", (info) => {
+      mainWindow?.webContents.send("updater:update-available", {
+        version: info.version,
+        releaseDate: info.releaseDate
+      });
+    });
+    autoUpdater.on("download-progress", (progress) => {
+      mainWindow?.webContents.send("updater:download-progress", Math.round(progress.percent));
+    });
+    autoUpdater.on("update-downloaded", (info) => {
+      mainWindow?.webContents.send("updater:update-downloaded", { version: info.version });
+    });
+    autoUpdater.on("error", (err) => {
+      console.error("Auto-updater error:", err.message);
+    });
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(() => {
+      });
+    }, 3e3);
+  }
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+ipcMain.handle("updater:install", () => {
+  autoUpdater.quitAndInstall(false, true);
 });
 ipcMain.on("get-user-data-path", (e) => {
   e.returnValue = userData();
@@ -471,6 +501,28 @@ ipcMain.handle("import:json", async () => {
   if (canceled || !filePaths[0]) return null;
   try {
     return readFileSync(filePaths[0], "utf-8");
+  } catch {
+    return null;
+  }
+});
+ipcMain.handle("import:idoru", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: "Import from Idoru session (.idoru)",
+    filters: [{ name: "Idoru Session", extensions: ["idoru"] }],
+    properties: ["openFile"]
+  });
+  if (canceled || !filePaths[0]) return null;
+  try {
+    return readFileSync(filePaths[0], "utf-8");
+  } catch {
+    return null;
+  }
+});
+ipcMain.handle("audio:readBuffer", async (_, filePath) => {
+  try {
+    if (!filePath || typeof filePath !== "string") return null;
+    if (!existsSync(filePath)) return null;
+    return await readFile(filePath);
   } catch {
     return null;
   }

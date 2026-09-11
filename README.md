@@ -1,4 +1,4 @@
-# CIdoru v. 1.4
+# CIdoru v. 1.9.2
 
 
 ## DISCLAIMER:

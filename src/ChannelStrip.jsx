@@ -752,6 +752,7 @@ export function IdoruScene({
                              onSlotUpdate = null,
                              kbDisabled = false,
                              audioTransportSlot = null,
+                             onRequestFlush = null,
                            }) {
   const { leftBank, rightBank } = sceneCfg;
 
@@ -877,6 +878,24 @@ export function IdoruScene({
       });
     }, 200);
   }, [onStateChange]);
+
+  // Allow the parent to flush the current state synchronously (e.g. before transfer)
+  // without waiting for the 200ms debounce to fire.
+  useEffect(() => {
+    if (!onRequestFlush) return;
+    const flush = () => {
+      clearTimeout(reportTimer.current);
+      onStateChange?.({
+        rightFaders:  rightFadersRef.current.map(f => ({ ...f })),
+        linkedPairs:  [...linkedPairsRef.current],
+        modifierDb:   modifierDbRef.current,
+        matrix:       matrixRef.current.map(r => [...r]),
+        leftMutes:    [...manualMuteFlagsRef.current],
+      });
+    };
+    onRequestFlush(flush);
+    return () => onRequestFlush(null);
+  }, [onRequestFlush, onStateChange]);
 
   // ── Right bank: output selection ─────────────────────────────
   const handleRightActivate = useCallback((stripIdx, shiftKey = false) => {
@@ -1687,100 +1706,128 @@ function AudioTransport({ song, mixerState, fileCache, selectedCol }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  TOOLBAR
+//  MENU BAR  (replaces flat ToolBar)
 // ═══════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════
-//  TOOLBAR
-// ═══════════════════════════════════════════════════════════════════
-function ToolBar({ onSave, onLoad, onTransfer, onSwitchView, viewMode, dirty,
-                   onExport, onImport, onImportIdoru, onNewSession, onSavePreset, onScan, onFirmware,
+function MenuBar({ onSave, onLoad, onTransfer, onSwitchView, viewMode, dirty,
+                   onExport, onImport, onImportIdoru, onNewSession,
+                   onSavePreset, onBatchPreset, onScan, onFirmware,
                    theme, onToggleTheme }) {
+  const [open, setOpen] = useState(null); // id of currently open menu
+  const barRef = useRef(null);
+
+  // Close on click outside
+  useEffect(() => {
+    const handler = (e) => {
+      if (barRef.current && !barRef.current.contains(e.target)) setOpen(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const toggle = (id) => setOpen(prev => prev === id ? null : id);
+  const close  = () => setOpen(null);
+  const run    = (fn) => { close(); fn?.(); };
+
+  const menus = [
+    {
+      id: "session", label: "Session",
+      items: [
+        { label: "New Session", icon: "◻", action: onNewSession },
+        null,
+        { label: dirty ? "Save  ●" : "Save", icon: "▣", action: onSave },
+        { label: "Load", icon: "▤", action: onLoad },
+        null,
+        { label: "Export JSON", icon: "↓", action: onExport },
+        { label: "Import JSON", icon: "↑", action: onImport },
+        onImportIdoru ? { label: "Import .idoru", icon: "↑", action: onImportIdoru } : null,
+      ].filter(x => x !== undefined),
+    },
+    {
+      id: "mixer", label: "Mixer",
+      items: [
+        { label: "Save Preset", icon: "★", action: onSavePreset },
+        { label: "Batch Apply Preset…", icon: "⊛", action: onBatchPreset },
+        null,
+        { label: "Scan Files", icon: "⌕", action: onScan },
+      ],
+    },
+    {
+      id: "hardware", label: "Hardware",
+      items: [
+        { label: "Transfer to SD Card", icon: "⏏", action: onTransfer, accent: "transfer" },
+        { label: "Check Firmware", icon: "⬆", action: onFirmware, accent: "firmware" },
+      ],
+    },
+    {
+      id: "view", label: "View",
+      items: [
+        {
+          label: viewMode === "classic" ? "Matrix View" : "Fader View",
+          icon: viewMode === "classic" ? "⊞" : "⊟",
+          action: onSwitchView,
+          active: viewMode === "matrix",
+        },
+        null,
+        {
+          label: theme === "light" ? "Dark Theme" : "Light Theme",
+          icon: theme === "light" ? "☾" : "☀",
+          action: onToggleTheme,
+        },
+      ],
+    },
+    {
+      id: "help", label: "Help",
+      items: [
+        {
+          label: "Manual", icon: "?",
+          action: () => {
+            if (window.electronAPI?.openManual) window.electronAPI.openManual();
+            else window.open('/MANUAL.html', '_blank');
+          },
+        },
+      ],
+    },
+  ];
+
   return (
-      <div className="toolbar">
-      <span className="toolbar-logo">
-        CIDORU <span className="toolbar-logo-version">v. {APP_VERSION}</span>
-        <span className="toolbar-logo-sub">:: alternative app for Idoru P-1</span>
-      </span>
-        <div className="toolbar-divider" />
+      <div className="menu-bar" ref={barRef}>
+        <span className="menu-bar-logo">
+          CIDORU <span className="menu-bar-version">v. {APP_VERSION}</span>
+          <span className="menu-bar-sub">:: alternative app for Idoru P-1</span>
+        </span>
+        <div className="menu-bar-divider" />
 
-        {/* Session */}
-        <button className="toolbar-btn toolbar-btn--new" onClick={onNewSession} title="New session — resets all state">
-          <span className="toolbar-btn-icon">◻</span> NEW
-        </button>
-        <button className={`toolbar-btn${dirty ? " toolbar-btn--dirty" : ""}`} onClick={onSave}
-                title={dirty ? "Unsaved changes" : "Save session"}>
-          <span className="toolbar-btn-icon">▣</span> SAVE
-        </button>
-        <button className="toolbar-btn" onClick={onLoad} title="Reload from storage">
-          <span className="toolbar-btn-icon">▤</span> LOAD
-        </button>
+        {menus.map(menu => (
+            <div key={menu.id} className={`menu-root${open === menu.id ? " menu-root--open" : ""}`}>
+              <button
+                  className="menu-root-btn"
+                  onClick={() => toggle(menu.id)}
+              >
+                {menu.label}
+              </button>
+              {open === menu.id && (
+                  <div className="menu-dropdown">
+                    {menu.items.map((item, i) =>
+                        item === null
+                            ? <div key={i} className="menu-sep" />
+                            : (
+                                <button
+                                    key={i}
+                                    className={`menu-item${item.active ? " menu-item--active" : ""}${item.accent ? ` menu-item--${item.accent}` : ""}`}
+                                    onClick={() => run(item.action)}
+                                >
+                                  <span className="menu-item-icon">{item.icon}</span>
+                                  {item.label}
+                                </button>
+                            )
+                    )}
+                  </div>
+              )}
+            </div>
+        ))}
 
-        <div className="toolbar-divider" />
-
-        {/* Import / Export */}
-        <button className="toolbar-btn" onClick={onExport} title="Export session as JSON file">
-          <span className="toolbar-btn-icon">↓</span> EXPORT
-        </button>
-        <button className="toolbar-btn" onClick={onImport} title="Import session from JSON file">
-          <span className="toolbar-btn-icon">↑</span> IMPORT
-        </button>
-        {onImportIdoru && (
-            <button className="toolbar-btn" onClick={onImportIdoru} title="Import from original Idoru .idoru session file">
-              <span className="toolbar-btn-icon">↑</span> .IDORU
-            </button>
-        )}
-
-        <div className="toolbar-divider" />
-
-        {/* Preset + Scan */}
-        <button className="toolbar-btn toolbar-btn--preset" onClick={onSavePreset}
-                title="Save current mixer state as a reusable preset">
-          <span className="toolbar-btn-icon">★</span> PRESET
-        </button>
-        <button className="toolbar-btn" onClick={onScan} title="Scan for missing audio files">
-          <span className="toolbar-btn-icon">⌕</span> SCAN
-        </button>
-
-        <div className="toolbar-divider" />
-
-        {/* SD card */}
-        <button className="toolbar-btn toolbar-btn--transfer" onClick={onTransfer}
-                title="Write P-1 config files and audio to SD card">
-          <span className="toolbar-btn-icon">⏏</span> TRANSFER
-        </button>
-        <button className="toolbar-btn toolbar-btn--firmware" onClick={onFirmware}
-                title="Check for firmware updates at idoru.live">
-          <span className="toolbar-btn-icon">⬆</span> FIRMWARE
-        </button>
-
-        <div className="toolbar-divider" />
-
-        {/* View */}
-        <button className={`toolbar-btn${viewMode === "matrix" ? " toolbar-btn--view-active" : ""}`}
-                onClick={onSwitchView} title="Switch fader / matrix view">
-          <span className="toolbar-btn-icon">{viewMode === "classic" ? "⊞" : "⊟"}</span>
-          {viewMode === "classic" ? "MATRIX" : "FADERS"}
-        </button>
-
-        <div className="toolbar-spacer" />
-
-        {/* Theme toggle */}
-        <button className={`toolbar-btn toolbar-btn--theme${theme === "light" ? " toolbar-btn--theme-light" : ""}`}
-                onClick={onToggleTheme}
-                title={theme === "light" ? "Switch to dark theme" : "Switch to light theme"}>
-          <span className="toolbar-btn-icon">{theme === "light" ? "☾" : "☀"}</span>
-          {theme === "light" ? "DARK" : "LIGHT"}
-        </button>
-
-        {/* Manual — always on the far right */}
-        <button className="toolbar-btn toolbar-btn--manual"
-                onClick={() => {
-                  if (window.electronAPI?.openManual) window.electronAPI.openManual();
-                  else window.open('/MANUAL.html', '_blank');
-                }}
-                title="Open user manual">
-          <span className="toolbar-btn-icon">?</span> MANUAL
-        </button>
+        <div className="menu-bar-spacer" />
+        {dirty && <span className="menu-bar-dirty" title="Unsaved changes">●</span>}
       </div>
   );
 }
@@ -1899,8 +1946,8 @@ function InfoBar({ message }) {
 // ═══════════════════════════════════════════════════════════════════
 function ConfirmModal({ title, message, confirmLabel = "Confirm", danger = false, onConfirm, onCancel }) {
   return (
-      <div className="modal-overlay" onClick={onCancel}>
-        <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={onCancel}>
+        <div className="modal" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>{title}</span>
             <button className="modal-close" onClick={onCancel}>✕</button>
@@ -1911,6 +1958,151 @@ function ConfirmModal({ title, message, confirmLabel = "Confirm", danger = false
           <div className="modal-footer">
             <button className="modal-btn" onClick={onCancel}>Cancel</button>
             <button className={`modal-btn${danger ? " modal-btn--danger" : " modal-btn--primary"}`} onClick={onConfirm}>{confirmLabel}</button>
+          </div>
+        </div>
+      </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  BATCH PRESET MODAL
+//  Apply a preset to (or reset) multiple playlists / songs at once.
+//  onConfirm({ action: 'apply'|'reset', presetId?: string, songIds: string[] })
+// ═══════════════════════════════════════════════════════════════════
+function BatchPresetModal({ playlists, songs, onConfirm, onCancel }) {
+  const presets = platform.getInitialPresets();
+  const [action,        setAction]       = useState("apply");
+  const [selectedPreset, setSelectedPreset] = useState(presets[0]?.id ?? "");
+  // checkedSongs: Set of song IDs currently checked
+  const [checkedSongs,  setCheckedSongs]  = useState(() => new Set());
+
+  // Per-playlist: all songs in that playlist
+  const songsOf = (plId) => songs.filter(s => s.playlistId === plId);
+
+  const toggleSong = (id) => {
+    setCheckedSongs(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const togglePlaylist = (plId) => {
+    const plSongs = songsOf(plId);
+    const allChecked = plSongs.every(s => checkedSongs.has(s.id));
+    setCheckedSongs(prev => {
+      const next = new Set(prev);
+      plSongs.forEach(s => allChecked ? next.delete(s.id) : next.add(s.id));
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setCheckedSongs(new Set(songs.map(s => s.id)));
+  };
+
+  const deselectAll = () => setCheckedSongs(new Set());
+
+  const canConfirm = checkedSongs.size > 0 && (action === "reset" || !!selectedPreset);
+
+  const confirm = () => {
+    if (!canConfirm) return;
+    onConfirm({
+      action,
+      presetId: action === "apply" ? selectedPreset : null,
+      songIds: [...checkedSongs],
+    });
+  };
+
+  return (
+      <div className="modal-overlay" onMouseDown={onCancel}>
+        <div className="modal modal--wide" onMouseDown={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <span>Batch Apply Preset</span>
+            <button className="modal-close" onClick={onCancel}>✕</button>
+          </div>
+          <div className="modal-body">
+
+            {/* Action */}
+            <div className="form-section-divider">Action</div>
+            <div className="form-row">
+              <label className="form-label">Mode</label>
+              <select className="form-select" value={action} onChange={e => setAction(e.target.value)}>
+                <option value="apply">Apply preset</option>
+                <option value="reset">Reset to defaults (faders to 0, all muted)</option>
+              </select>
+            </div>
+
+            {action === "apply" && (
+                <div className="form-row">
+                  <label className="form-label">Preset</label>
+                  <select className="form-select" value={selectedPreset}
+                          onChange={e => setSelectedPreset(e.target.value)}>
+                    <option value="">— Select preset —</option>
+                    {presets.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}{p.comment ? ` (${p.comment.slice(0, 30)})` : ""}</option>
+                    ))}
+                  </select>
+                </div>
+            )}
+            <div className="form-allowed-chars">
+              {action === "apply"
+                  ? "Routing and fader levels will be replaced. Audio file assignments are preserved."
+                  : "All faders reset to 0, all channels muted. Audio file assignments are preserved."}
+            </div>
+
+            {/* Song tree */}
+            <div className="form-section-divider">
+              Select songs
+              <span className="batch-select-links">
+                <button className="batch-link" onClick={selectAll}>Select all</button>
+                <button className="batch-link" onClick={deselectAll}>Deselect all</button>
+              </span>
+            </div>
+            <div className="batch-tree">
+              {playlists.map(pl => {
+                const plSongs = songsOf(pl.id);
+                if (!plSongs.length) return null;
+                const allChecked = plSongs.every(s => checkedSongs.has(s.id));
+                const someChecked = plSongs.some(s => checkedSongs.has(s.id));
+                return (
+                    <div key={pl.id} className="batch-playlist">
+                      <label className="batch-playlist-label">
+                        <input
+                            type="checkbox"
+                            checked={allChecked}
+                            ref={el => { if (el) el.indeterminate = someChecked && !allChecked; }}
+                            onChange={() => togglePlaylist(pl.id)}
+                        />
+                        <span className="batch-pl-name">{pl.name}</span>
+                        <span className="batch-pl-count">({plSongs.length} song{plSongs.length !== 1 ? "s" : ""})</span>
+                      </label>
+                      <div className="batch-songs">
+                        {plSongs.map(s => (
+                            <label key={s.id} className="batch-song-label">
+                              <input
+                                  type="checkbox"
+                                  checked={checkedSongs.has(s.id)}
+                                  onChange={() => toggleSong(s.id)}
+                              />
+                              {s.name}
+                            </label>
+                        ))}
+                      </div>
+                    </div>
+                );
+              })}
+            </div>
+            {checkedSongs.size > 0 && (
+                <div className="form-allowed-chars">{checkedSongs.size} song{checkedSongs.size !== 1 ? "s" : ""} selected</div>
+            )}
+          </div>
+          <div className="modal-footer">
+            <button className="modal-btn" onClick={onCancel}>Cancel</button>
+            <button className="modal-btn modal-btn--primary" onClick={confirm} disabled={!canConfirm}>
+              {action === "apply" ? "Apply Preset" : "Reset to Defaults"}
+            </button>
           </div>
         </div>
       </div>
@@ -1931,8 +2123,8 @@ function SavePresetModal({ onSave, onCancel }) {
   const canSave   = nameVal.valid;
 
   return (
-      <div className="modal-overlay" onClick={onCancel}>
-        <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={onCancel}>
+        <div className="modal" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>Save as Preset</span>
             <button className="modal-close" onClick={onCancel}>✕</button>
@@ -1991,8 +2183,8 @@ function TransferModal({ lines, done, result, onClose }) {
               : `Transfer complete. ${result?.copied ?? 0} file(s) copied, ${result?.skipped ?? 0} unchanged.`;
 
   return (
-      <div className="modal-overlay" onClick={done ? onClose : undefined}>
-        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={done ? onClose : undefined}>
+        <div className="modal modal--wide" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>SD Card Transfer</span>
             {done && <button className="modal-close" onClick={onClose}>✕</button>}
@@ -2031,8 +2223,8 @@ function ScanModal({ results, onRelink, onScanFolder, onClose }) {
   const fileLabel = (r) => r.slotIdx < 0 ? `${r.fileName}.mid` : `${r.fileName}.wav`;
 
   return (
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={onClose}>
+        <div className="modal modal--wide" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>Scan Results — {missing.length} missing · {unverified.length} unverified · {ok.length} ok</span>
             <button className="modal-close" onClick={onClose}>✕</button>
@@ -2176,8 +2368,8 @@ function FirmwareModal({ onClose }) {
   // For SD path picking we use the transfer dialog approach
   // ── Web version: static instructions ─────────────────────────────
   if (!isElectron) return (
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={onClose}>
+        <div className="modal" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>Firmware Update</span>
             <button className="modal-close" onClick={onClose}>✕</button>
@@ -2211,8 +2403,8 @@ function FirmwareModal({ onClose }) {
 
   // ── Electron version: smart firmware manager ──────────────────────
   return (
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={onClose}>
+        <div className="modal modal--wide" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>Firmware Manager</span>
             <button className="modal-close" onClick={onClose}>✕</button>
@@ -2353,8 +2545,8 @@ function PlaylistForm({ data, onSave, onCancel }) {
   };
 
   return (
-      <div className="modal-overlay" onClick={onCancel}>
-        <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={onCancel}>
+        <div className="modal" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>{data.id ? "Edit Playlist" : "New Playlist"}</span>
             <button className="modal-close" onClick={onCancel}>✕</button>
@@ -2390,7 +2582,7 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
 
   // Load presets for the dropdown
   const [presets] = useState(() => platform.getInitialPresets());
-  const [selectedPresetId, setSelectedPresetId] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState(song?.presetId ?? "");
 
   const [name,         setName]         = useState(song?.name         ?? "");
   const [bpm,          setBpm]          = useState(song?.bpm          ?? 120);
@@ -2406,13 +2598,6 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
 
   const ref = useRef(null);
   useEffect(() => { ref.current?.focus(); }, []);
-
-  // Apply preset (routing/levels only — not song metadata or files)
-  const handleApplyPreset = (presetId) => {
-    setSelectedPresetId(presetId);
-    // Preset doesn't affect name/bpm/queue/midi/slots
-    // Those are stored in mixerStates in the parent — parent will apply on save
-  };
 
   const nameValidation = validateP1Name(name);
   const midiValidation = midi.trim() ? validateP1Name(midi.trim()) : { valid: true, error: null };
@@ -2466,8 +2651,8 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
   };
 
   return (
-      <div className="modal-overlay" onClick={onCancel}>
-        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={onCancel}>
+        <div className="modal modal--wide" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>{song?.id ? "Edit Song" : "New Song"}</span>
             <button className="modal-close" onClick={onCancel}>✕</button>
@@ -2496,15 +2681,17 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
                 </>
             )}
 
-            {/* Preset selector (optional) */}
-            {!song?.id && presets.length > 0 && (
+            {/* Preset selector — available for both new and edit */}
+            {presets.length > 0 && (
                 <>
-                  <div className="form-section-divider">Start from Preset (optional)</div>
+                  <div className="form-section-divider">
+                    {song?.id ? "Change Preset (optional)" : "Start from Preset (optional)"}
+                  </div>
                   <div className="form-row">
                     <label className="form-label">Preset</label>
                     <select className="form-select" value={selectedPresetId}
-                            onChange={e => handleApplyPreset(e.target.value)}>
-                      <option value="">— None (use defaults) —</option>
+                            onChange={e => setSelectedPresetId(e.target.value)}>
+                      <option value="">— None —</option>
                       {presets.map(p => (
                           <option key={p.id} value={p.id}>{p.name}{p.comment ? ` (${p.comment.slice(0, 30)})` : ""}</option>
                       ))}
@@ -2512,7 +2699,9 @@ function SongForm({ song, onSave, onCancel, allPlaylists = [], currentPlaylistId
                   </div>
                   {selectedPresetId && (
                       <div className="form-allowed-chars">
-                        Routing and fader levels from preset will be applied. Audio files will be empty.
+                        {song?.id
+                            ? "Routing and fader levels will be replaced by the preset. Audio files are kept."
+                            : "Routing and fader levels from preset will be applied. Audio files will be empty."}
                       </div>
                   )}
                 </>
@@ -2624,8 +2813,8 @@ function WebWelcomeModal({ onClose }) {
   const winUrl   = '/CIdoru-Setup-1.8.0.exe';
   const linuxUrl = '/CIdoru-Setup-1.8.0.AppImage';
   return (
-      <div className="modal-overlay" onClick={onClose}>
-        <div className="modal modal--wide" onClick={e => e.stopPropagation()}>
+      <div className="modal-overlay" onMouseDown={onClose}>
+        <div className="modal modal--wide" onMouseDown={e => e.stopPropagation()}>
           <div className="modal-header">
             <span>⚠ Please Read Before Using</span>
             <button className="modal-close" onClick={onClose}>✕</button>
@@ -2734,6 +2923,11 @@ export function App() {
     };
   });
   const [mixerStates,   setMixerStates]  = useState(() => (platform.getInitialSession() || {}).mixerStates || {});
+  // Ref always holds the latest mixerStates synchronously — used by transfer to avoid
+  // a 200ms debounce race where the last fader change hasn't been flushed yet.
+  const mixerStatesRef = useRef(mixerStates);
+  // Keep ref in sync whenever React state changes (preset apply, load, duplicate, etc.)
+  useEffect(() => { mixerStatesRef.current = mixerStates; }, [mixerStates]);
   const [dirtyIds,      setDirtyIds]     = useState(() => new Set());
   const [selectedPlId,  setSelectedPlId] = useState(null);
   const [selectedSongId,setSongId]       = useState(null);
@@ -2771,7 +2965,8 @@ export function App() {
   // Modal states
   const [playlistForm,  setPlForm]       = useState(null);
   const [songForm,      setSongForm]     = useState(null);
-  const [presetForm,    setPresetForm]   = useState(false);
+  const [presetForm,      setPresetForm]      = useState(false);
+  const [batchPresetModal, setBatchPresetModal] = useState(false);
   const [scanModal,     setScanModal]    = useState(null);   // null | results[]
   const [confirmModal,  setConfirmModal] = useState(null);   // null | { title, message, onConfirm }
   const [firmwareModal, setFirmwareModal] = useState(false);
@@ -2783,6 +2978,12 @@ export function App() {
   // File cache: Map<cacheKey, File|path> — persisted to disk in Electron, lost on reload in web.
   // Keys: `${songId}_f${slotIdx}` for WAV slots, `${songId}_midi` for MIDI.
   const fileCache  = useRef(new Map());
+  // Holds a function provided by IdoruScene that fires onStateChange synchronously,
+  // bypassing the 200ms debounce — called right before transfer starts.
+  const sceneFlushRef = useRef(null);
+  // Incremented when a preset is applied to an already-open song — forces IdoruScene remount
+  // so it re-initialises from the freshly written mixerState.
+  const [presetVersion, setPresetVersion] = useState(0);
 
   // Restore file paths from disk on startup (Electron only — no-op in web)
   useEffect(() => {
@@ -3042,6 +3243,48 @@ export function App() {
     showInfo(`Preset "${name}" saved.`, "success");
   }, [selectedSongId, mixerStates, showInfo]);
 
+  const handleBatchPreset = useCallback(({ action, presetId, songIds }) => {
+    let newMixerState = null;
+    if (action === "apply") {
+      const preset = platform.getInitialPresets().find(p => p.id === presetId);
+      if (!preset) { showInfo("Preset not found.", "error"); return; }
+      newMixerState = {
+        matrix:      preset.matrix,
+        leftMutes:   preset.leftMutes,
+        rightFaders: preset.rightFaders,
+        linkedPairs: preset.linkedPairs,
+        modifierDb:  preset.modifierDb,
+      };
+    } else {
+      // reset: default state — all faders at 0, all channels muted
+      newMixerState = {
+        matrix:      defaultMatrix(),
+        leftMutes:   Array(7).fill(true),
+        rightFaders: IDORU_SCENE_CONFIG.rightBank.channels.map(c => ({ db: c.initialDb ?? 0, muted: false })),
+        linkedPairs: [false, false, false],
+        modifierDb:  0,
+      };
+    }
+    const updates = {};
+    songIds.forEach(id => { updates[id] = newMixerState; });
+    mixerStatesRef.current = { ...mixerStatesRef.current, ...updates };
+    setMixerStates(prev => ({ ...prev, ...updates }));
+    // If the currently open song is in the batch, force scene remount
+    if (selectedSongId && songIds.includes(selectedSongId)) {
+      setPresetVersion(v => v + 1);
+    }
+    setDirtyIds(prev => {
+      const next = new Set([...prev]);
+      songIds.forEach(id => next.add(id));
+      return next;
+    });
+    setBatchPresetModal(false);
+    const presetName = action === "apply"
+        ? platform.getInitialPresets().find(p => p.id === presetId)?.name ?? "preset"
+        : "defaults";
+    showInfo(`Applied "${presetName}" to ${songIds.length} song${songIds.length !== 1 ? "s" : ""}.`, "success");
+  }, [selectedSongId, showInfo]);
+
   // ── Scan ─────────────────────────────────────────────────────────
   // silent: true = only open modal if confirmed missing (not just unverified)
   const handleScan = useCallback(async ({ silent = false } = {}) => {
@@ -3157,6 +3400,10 @@ export function App() {
 
   // ── Transfer ─────────────────────────────────────────────────────
   const handleTransfer = useCallback(async () => {
+    // Flush any pending scene state before reading mixerStatesRef — this ensures
+    // a fader drag within the last 200ms is captured before the song file is written.
+    sceneFlushRef.current?.();
+
     // Open modal in busy state immediately
     setTransferModal({ lines: ["Waiting for folder selection…"], done: false, result: null });
 
@@ -3166,7 +3413,7 @@ export function App() {
 
     try {
       const result = await platform.transfer(
-          project, mixerStates, fileCache.current,
+          project, mixerStatesRef.current, fileCache.current,
           (msg) => appendLine(msg)
       );
       setTransferModal(prev => prev ? { ...prev, done: true, result } : prev);
@@ -3174,11 +3421,14 @@ export function App() {
       appendLine(`⛔ ${err.message}`);
       setTransferModal(prev => prev ? { ...prev, done: true, result: { missing: [], aborted: false, copied: 0, skipped: 0, error: err.message } } : prev);
     }
-  }, [project, mixerStates]);
+  }, [project, mixerStatesRef]);
 
   // ── Mixer state from scene ────────────────────────────────────────
   const handleMixerStateChange = useCallback((state) => {
     if (!selectedSongId) return;
+    // Update ref synchronously so transfer always sees the latest state,
+    // even if the React state update hasn't re-rendered yet.
+    mixerStatesRef.current = { ...mixerStatesRef.current, [selectedSongId]: state };
     setMixerStates(prev => ({ ...prev, [selectedSongId]: state }));
     setDirtyIds(prev => new Set([...prev, selectedSongId]));
   }, [selectedSongId]);
@@ -3281,12 +3531,22 @@ export function App() {
     if (!src || project.playlists.length >= 7) { showInfo("Max 7 playlists.", "error"); return; }
     const newPlId = genId();
     const srcSongs = project.songs.filter(s => s.playlistId === id);
-    const newSongs = srcSongs.map(s => ({ ...s, id: genId(), playlistId: newPlId, name: `${s.name} copy` }));
+    // Song names keep their original names — only the playlist gets the "copy" suffix
+    const newSongs = srcSongs.map(s => ({ ...s, id: genId(), playlistId: newPlId }));
     setProject(p => ({
       ...p,
       playlists: [...p.playlists, { id: newPlId, name: `${src.name} copy` }],
       songs:     [...p.songs, ...newSongs],
     }));
+    // Copy mixer states so duplicated songs start with the same routing as originals
+    const stateUpdates = {};
+    newSongs.forEach((ns, i) => {
+      const srcId = srcSongs[i].id;
+      if (mixerStates[srcId]) stateUpdates[ns.id] = { ...mixerStates[srcId] };
+    });
+    if (Object.keys(stateUpdates).length) {
+      setMixerStates(prev => ({ ...prev, ...stateUpdates }));
+    }
     setDirtyIds(prev => new Set([...prev, "__meta"]));
     showInfo(`Duplicated "${src.name}".`, "success");
   };
@@ -3374,6 +3634,27 @@ export function App() {
       }
       if (_midiFile) platform.cacheFileFromPickResult(fileCache.current, `${rest.id}_midi`,
           { file: _midiFile instanceof File ? _midiFile : null, filePath: typeof _midiFile === "string" ? _midiFile : null });
+
+      // If preset changed, apply its routing/fader values (files are preserved via rest.audioSlots)
+      const existingSong = project.songs.find(s => s.id === rest.id);
+      const presetChanged = presetId && presetId !== existingSong?.presetId;
+      if (presetChanged) {
+        const preset = platform.getInitialPresets().find(p => p.id === presetId);
+        if (preset) {
+          const newMixerState = {
+            matrix:      preset.matrix,
+            leftMutes:   preset.leftMutes,
+            rightFaders: preset.rightFaders,
+            linkedPairs: preset.linkedPairs,
+            modifierDb:  preset.modifierDb,
+          };
+          mixerStatesRef.current = { ...mixerStatesRef.current, [rest.id]: newMixerState };
+          setMixerStates(prev => ({ ...prev, [rest.id]: newMixerState }));
+          // Bump presetVersion to force IdoruScene remount so it reads fresh initialMatrix/leftMutes
+          setPresetVersion(v => v + 1);
+        }
+      }
+
       // Ensure uuid and file UUIDs are preserved/assigned on edit
       setProject(p => ({ ...p, songs: p.songs.map(s => {
           if (s.id !== rest.id) return s;
@@ -3383,6 +3664,7 @@ export function App() {
           }));
           return {
             ...rest,
+            presetId:     presetId || null,
             uuid:         s.uuid || genUUID(),
             playlistId:   s.playlistId,
             audioSlots:   updatedSlots,
@@ -3434,12 +3716,13 @@ export function App() {
 
   return (
       <div className="idoru-app">
-        <ToolBar
+        <MenuBar
             onSave={handleSave} onLoad={handleLoad} onTransfer={handleTransfer}
             onSwitchView={() => setViewMode(v => v === "classic" ? "matrix" : "classic")}
             viewMode={viewMode} dirty={dirty}
             onExport={handleExport} onImport={handleImport} onImportIdoru={handleImportIdoru}
             onNewSession={handleNewSession} onSavePreset={handleSavePreset}
+            onBatchPreset={() => setBatchPresetModal(true)}
             onScan={handleScan} onFirmware={() => setFirmwareModal(true)}
             theme={theme} onToggleTheme={handleToggleTheme}
         />
@@ -3484,7 +3767,7 @@ export function App() {
 
             {viewMode === "classic" && (
                 <IdoruScene
-                    key={selectedSongId ?? "__default"}
+                    key={`${selectedSongId ?? "__default"}-${presetVersion}`}
                     sceneCfg={effectiveSceneCfg}
                     initialLinkedPairs={initialLinkedPairs}
                     initialMatrix={initialMatrix}
@@ -3492,7 +3775,8 @@ export function App() {
                     onStateChange={handleMixerStateChange}
                     audioSlots={selectedSong?.audioSlots ?? null}
                     onSlotUpdate={selectedSongId ? handleSlotUpdate : null}
-                    kbDisabled={!!(playlistForm || songForm || presetForm || scanModal || confirmModal || firmwareModal || transferModal)}
+                    kbDisabled={!!(playlistForm || songForm || presetForm || batchPresetModal || scanModal || confirmModal || firmwareModal || transferModal)}
+                    onRequestFlush={(fn) => { sceneFlushRef.current = fn; }}
                     audioTransportSlot={(selectedCol) => (
                         <AudioTransport
                             song={selectedSong}
@@ -3532,7 +3816,13 @@ export function App() {
             />
         )}
         {transferModal  && <TransferModal lines={transferModal.lines} done={transferModal.done} result={transferModal.result} onClose={() => setTransferModal(null)} />}
-        {presetForm     && <SavePresetModal onSave={handleConfirmPreset} onCancel={() => setPresetForm(false)} />}
+        {presetForm      && <SavePresetModal onSave={handleConfirmPreset} onCancel={() => setPresetForm(false)} />}
+        {batchPresetModal && <BatchPresetModal
+            playlists={project.playlists}
+            songs={project.songs}
+            onConfirm={handleBatchPreset}
+            onCancel={() => setBatchPresetModal(false)}
+        />}
         {scanModal      && <ScanModal results={scanModal} onRelink={handleRelink} onScanFolder={handleScanFolder} onClose={() => setScanModal(null)} />}
         {firmwareModal  && <FirmwareModal onClose={() => setFirmwareModal(false)} />}
         {welcomeModal   && <WebWelcomeModal onClose={() => setWelcomeModal(false)} />}

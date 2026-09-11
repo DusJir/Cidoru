@@ -387,6 +387,122 @@ body { background: #07080d; }
 .toolbar-btn--view-active  { background: var(--tb-btn-view-active-bg); border-color: var(--tb-btn-view-active-bd); color: var(--tb-btn-view-active); }
 .toolbar-btn-icon          { font-size: 14px; line-height: 1; }
 
+/* ── Menu Bar ─────────────────────────────────────────────────── */
+.menu-bar {
+  height: 40px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 0; padding: 0 8px;
+  background: var(--tb-bg);
+  border-bottom: 1px solid var(--tb-bd);
+  box-shadow: var(--tb-shadow);
+  position: relative; z-index: 200;
+}
+.menu-bar-logo {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.35em;
+  color: var(--tb-logo); text-transform: uppercase;
+  padding: 0 10px 0 4px; flex-shrink: 0;
+  display: flex; align-items: baseline; gap: 6px;
+  border-right: 1px solid var(--tb-div); margin-right: 4px;
+}
+.menu-bar-version {
+  font-size: 10px; font-weight: 400; letter-spacing: 0.15em; color: var(--tb-logo);
+}
+.menu-bar-sub {
+  font-size: 8px; font-weight: 400; letter-spacing: 0.08em;
+  color: #2a4050; text-transform: none;
+}
+.menu-bar-divider { width: 1px; height: 18px; background: var(--tb-div); margin: 0 4px; flex-shrink: 0; }
+.menu-bar-spacer  { flex: 1; }
+.menu-bar-dirty   { color: var(--tb-btn-dirty-color); font-size: 18px; padding-right: 8px; line-height: 1; }
+
+/* ── Menu root items ──────────────────────────────────────────── */
+.menu-root { position: relative; }
+.menu-root-btn {
+  background: none; border: none; cursor: pointer;
+  font-family: var(--cs-font), sans-serif;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--tb-btn-color);
+  padding: 0 12px; height: 40px;
+  transition: background 0.1s, color 0.1s;
+}
+.menu-root-btn:hover,
+.menu-root--open .menu-root-btn {
+  background: var(--tb-btn-hover-bg); color: var(--tb-btn-hover-color);
+}
+
+/* ── Dropdown panel ───────────────────────────────────────────── */
+.menu-dropdown {
+  position: absolute; top: 100%; left: 0;
+  min-width: 200px;
+  background: var(--modal-bg);
+  border: 1px solid var(--modal-bd);
+  border-radius: 0 4px 4px 4px;
+  box-shadow: 0 8px 24px #00000099;
+  padding: 4px 0;
+  z-index: 300;
+}
+.menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 7px 16px;
+  background: none; border: none; cursor: pointer;
+  font-family: var(--cs-font), sans-serif;
+  font-size: 12px; font-weight: 500; letter-spacing: 0.05em;
+  color: var(--modal-header-color);
+  text-align: left; white-space: nowrap;
+  transition: background 0.08s, color 0.08s;
+}
+.menu-item:hover                { background: #1a2a3a; color: #9abcdc; }
+.menu-item--active              { color: var(--tb-btn-view-active); }
+.menu-item--active:hover        { color: #7adcfc; }
+.menu-item--transfer            { color: var(--tb-btn-transfer-color); }
+.menu-item--transfer:hover      { background: #0a2018; color: #5acc9a; }
+.menu-item--firmware            { color: #7a5a9a; }
+.menu-item--firmware:hover      { background: #1a1028; color: #aa8aca; }
+.menu-item-icon                 { font-size: 13px; width: 16px; text-align: center; flex-shrink: 0; }
+.menu-sep {
+  height: 1px; background: var(--modal-bd);
+  margin: 4px 0;
+}
+[data-theme="light"] .menu-dropdown { background: #f4f6fa; border-color: #c0ccd8; }
+[data-theme="light"] .menu-item     { color: #3a5068; }
+[data-theme="light"] .menu-item:hover { background: #e0eaf4; color: #1a3050; }
+[data-theme="light"] .menu-sep      { background: #c0ccd8; }
+
+/* ── Batch Preset Modal ───────────────────────────────────────── */
+.batch-select-links {
+  float: right; display: flex; gap: 8px;
+}
+.batch-link {
+  background: none; border: none; cursor: pointer;
+  font-family: var(--cs-font), sans-serif; font-size: 11px;
+  color: var(--modal-header-color); text-decoration: underline; padding: 0;
+}
+.batch-link:hover { color: var(--modal-primary-color); }
+.batch-tree {
+  max-height: 280px; overflow-y: auto;
+  border: 1px solid var(--modal-bd); border-radius: 4px;
+  padding: 8px; margin-bottom: 6px;
+  background: #05060a;
+}
+[data-theme="light"] .batch-tree { background: #f0f4f8; border-color: #c0ccd8; }
+.batch-playlist { margin-bottom: 8px; }
+.batch-playlist:last-child { margin-bottom: 0; }
+.batch-playlist-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.1em;
+  color: var(--modal-primary-color); cursor: pointer; padding: 2px 0;
+}
+.batch-pl-count { font-weight: 400; font-size: 11px; color: var(--modal-header-color); margin-left: auto; }
+.batch-songs {
+  padding-left: 20px; margin-top: 2px;
+}
+.batch-song-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--modal-header-color);
+  cursor: pointer; padding: 2px 0;
+}
+.batch-song-label:hover,
+.batch-playlist-label:hover { color: #9abcdc; }
+
 /* ═══════════════════════════════════════════════════════════════════
    MAIN LAYOUT
    ═══════════════════════════════════════════════════════════════════ */

@@ -307,7 +307,7 @@
     <main class="content">
 
         <h1>CIdoru — User Manual</h1>
-        <div class="version">Version 1.9.1</div>
+        <div class="version">Version 1.9.2</div>
 
         <!-- 1 -->
         <h2 id="s1"><span class="section-num">1</span>Introduction</h2>
@@ -340,10 +340,10 @@
 
         <!-- 3 -->
         <h2 id="s3"><span class="section-num">3</span>Interface Overview</h2>
-        <p>The CIdoru interface has three vertical columns, a toolbar at the top, and an info bar at the bottom.</p>
+        <p>The CIdoru interface has three vertical columns, a menu bar at the top, and an info bar at the bottom.</p>
         <pre>
 ┌──────────────────────────────────────────────────────────────┐
-│  TOOLBAR                                                     │
+│  MENU BAR  (Session · Mixer · Hardware · View · Help)        │
 ├──────────────┬───────────────────────────────────┬──────────┤
 │              │                                   │          │
 │  PLAYLISTS   │                                   │          │
@@ -363,8 +363,8 @@
             <dd>The mixer in classic fader view, or the routing matrix in matrix view. This is the main workspace.</dd>
             <dt>Right column (10%)</dt>
             <dd>Context-sensitive help text that updates based on what you are doing.</dd>
-            <dt>Toolbar</dt>
-            <dd>All session-level actions: New, Save, Load, Export, Import, Preset, Scan, Transfer, Firmware, view switcher, and Manual.</dd>
+            <dt>Menu bar</dt>
+            <dd>All session-level actions, organised into five menus. <strong>Session</strong>: New, Save, Load, Export/Import JSON, Import .idoru. <strong>Mixer</strong>: Save Preset, Batch Apply Preset, Scan Files. <strong>Hardware</strong>: Transfer to SD Card, Check Firmware. <strong>View</strong>: switch between Fader and Matrix view, toggle light/dark theme. <strong>Help</strong>: open this manual. An unsaved-changes indicator (●) appears on the right side of the bar when there are pending changes.</dd>
             <dt>Info bar</dt>
             <dd>Status messages. Messages auto-clear after a few seconds.</dd>
         </dl>
@@ -385,7 +385,7 @@
         <p>Click the <strong>✎</strong> icon on the playlist row. The same modal used for creation will appear, pre-filled with the current name.</p>
 
         <h3>Duplicating a playlist</h3>
-        <p>Click the <strong>⧉</strong> icon. A copy of the playlist and all its songs is created immediately, with "copy" appended to the name. The 7-playlist limit is checked — if already at 7, an error is shown.</p>
+        <p>Click the <strong>⧉</strong> icon. A copy of the playlist and all its songs is created immediately, with "copy" appended to the playlist name. Song names inside the playlist are not changed — only the playlist itself gets the suffix. All mixer settings (routing, faders, mutes) are copied along with the songs. The 7-playlist limit is checked — if already at 7, an error is shown.</p>
 
         <h3>Reordering playlists</h3>
         <p>Use the <strong>↑</strong> and <strong>↓</strong> arrow buttons on each row. The order here matches the order in which setlists appear on the SD card.</p>
@@ -481,19 +481,25 @@
         <h3>Saving a preset</h3>
         <ol>
             <li>Select a song with the mixer state you want to save.</li>
-            <li>Click <strong>★ PRESET</strong> in the toolbar.</li>
+            <li>Open <strong>Mixer → Save Preset</strong> in the menu bar.</li>
             <li>Enter a name and optional comment, then click <strong>Save Preset</strong>.</li>
         </ol>
-        <p>Presets are stored in browser local storage independently of the session — they survive loading a different session.</p>
+        <p>Presets are stored independently of the session — they survive loading a different session.</p>
 
-        <h3>Applying a preset</h3>
-        <p>When creating a new song, a <strong>Start from Preset</strong> dropdown appears if any presets exist. Select one to apply its routing and fader values. Audio file slots are left empty.</p>
+        <h3>Applying a preset to a new song</h3>
+        <p>When creating a new song, a <strong>Start from Preset</strong> dropdown appears if any presets exist. Select one to apply its routing and fader values to the new song. Audio file slots are left empty.</p>
+
+        <h3>Changing a preset on an existing song</h3>
+        <p>Open <strong>Edit Song</strong> (✎ on the song row) and use the <strong>Change Preset</strong> dropdown. Changing the preset replaces the song's routing and fader values with those from the new preset. Audio file assignments in F1–F6 are preserved — only the routing and levels change. The mixer view updates immediately after you save the edit.</p>
+
+        <h3>Batch applying a preset</h3>
+        <p>Open <strong>Mixer → Batch Apply Preset…</strong> to apply a preset (or reset to defaults) across multiple songs at once. A modal opens showing a tree of all playlists and their songs — tick the songs you want to change, choose <strong>Apply preset</strong> or <strong>Reset to defaults</strong>, and confirm. When resetting, all faders are set to 0 and all channels are muted; audio file assignments are preserved either way. An <strong>Select all</strong> / <strong>Deselect all</strong> shortcut is available at the top of the list.</p>
 
         <!-- 10 -->
         <h2 id="s10"><span class="section-num">10</span>Session Management</h2>
 
         <h3>Save</h3>
-        <p>Writes the session to browser local storage. The <strong>SAVE</strong> button glows amber when there are unsaved changes.</p>
+        <p>Writes the session to browser local storage. An unsaved-changes indicator (●) appears on the right side of the menu bar. Changes are written to storage when you select <strong>Session → Save</strong>.</p>
 
         <h3>Load</h3>
         <p>Reloads the session from local storage, discarding any unsaved in-memory changes.</p>
@@ -508,7 +514,7 @@
         <p>Opens a file picker. Select a previously exported <code>.json</code> file to restore that session.</p>
 
         <h3>Import .idoru</h3>
-        <p>Click <strong>↑ .IDORU</strong> in the toolbar to import a session from the original Idoru application's native format. CIdoru reads the <code>.idoru</code> file (which is JSON) and converts it automatically:</p>
+        <p>Select <strong>Session → Import .idoru</strong> from the menu bar to import a session from the original Idoru application's native format. CIdoru reads the <code>.idoru</code> file (which is JSON) and converts it automatically:</p>
         <ul>
             <li>Playlists and their order are preserved exactly as defined in the original session.</li>
             <li>Songs F1–F6 are mapped to CIdoru audio slots. The F7 AUX/VJ channel has no equivalent and is silently skipped.</li>
@@ -519,7 +525,7 @@
         <p>A file scan runs automatically after import. Files that are not found at their original paths appear as Missing or Unverified in the scan results — use <strong>Relink</strong> or <strong>⌕ Choose Folder</strong> to resolve them.</p>
         <div class="callout callout--note">
             <span class="callout-icon">ℹ</span>
-            <span>The <strong>↑ .IDORU</strong> button is only available in the desktop (Electron) version. The web version uses a standard file picker instead.</span>
+            <span>The <strong>Import .idoru</strong> option is only available in the desktop (Electron) version. The web version uses a standard file picker instead.</span>
         </div>
 
         <div class="callout callout--tip">

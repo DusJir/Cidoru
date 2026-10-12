@@ -20,9 +20,11 @@
     "build:electron": "electron-vite build",
     "build:win": "electron-vite build && electron-builder --win",
     "build:linux": "electron-vite build && electron-builder --linux",
+    "build:mac": "electron-vite build && electron-builder --mac",
     "build:all": "electron-vite build && electron-builder --win --linux",
     "package:win": "electron-vite build && electron-builder --win --publish always",
-    "package:linux": "electron-vite build && electron-builder --linux --publish always"
+    "package:linux": "electron-vite build && electron-builder --linux --publish always",
+    "package:mac": "electron-vite build && electron-builder --mac --publish always"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -85,6 +87,19 @@
       ],
       "artifactName": "CIdoru-Setup-${version}.AppImage",
       "category": "Audio"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "CIdoru-Setup-${version}-${arch}.dmg",
+      "category": "public.app-category.music"
     },
     "publish": {
       "provider": "github",
